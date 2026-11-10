@@ -1,0 +1,34 @@
+# Video / audio files never go to GitHub
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.m4v
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.flac
+
+# Working and output folders: keep the folder, ignore the contents
+work/*
+!work/.gitkeep
+output/*
+!output/.gitkeep
+input/*
+!input/.gitkeep
+
+# Whisper / noise-reduction model files
+models/
+*.bin
+*.pt
+*.ct2
+*.onnx
+*.rnnn
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

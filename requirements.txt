@@ -1,0 +1,3 @@
+auto-editor
+faster-whisper
+PyYAML

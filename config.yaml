@@ -1,0 +1,47 @@
+# lecture-editor settings. Change values here; you never need to edit the code.
+
+# --- Captions (speech -> English text) ---
+whisper_model: medium          # small (faster, weaker) | medium | large-v3 (best, very slow on CPU)
+speech_language: ur            # ur works best for mixed Urdu + English | auto | en | hi
+max_caption_chars: 84          # longer captions are split into several shorter ones
+
+# --- Silence handling ---
+silence_min_seconds: 2         # only silences longer than this are sped up
+silence_speed: 3               # playback speed for silent parts
+silent_audio: mute             # mute | keep
+speech_margin_seconds: 0.3     # normal-speed padding kept around speech so words are not clipped
+silence_threshold: 0.04        # 0-1, audio quieter than this counts as silence (raise if noise is not detected as silence)
+
+# --- Audio cleanup ---
+rnnoise_model: assets/rnnoise.rnnn   # used for noise reduction if the file exists, otherwise falls back to afftdn
+loudness_target: -16                 # LUFS, loudnorm target
+
+# --- Caption style ---
+caption_style:
+  font: Arial
+  size: medium                 # small | medium | large, or a number
+  color: white
+  outline_color: black
+  outline_width: 2
+  position: bottom_center      # bottom_center | top_center | bottom_left | bottom_right
+  margin: 30                   # distance from the edge
+
+# --- Logo ---
+logo_watermark: off            # off | on (uses assets/logo.png, top-right corner)
+logo_path: assets/logo.png
+logo_height_percent: 10        # logo height as % of video height
+
+# --- Intro / outro ---
+intro_path: assets/intro.mp4
+outro_path: assets/outro.mp4
+
+# --- Output ---
+output:
+  width: 1920
+  height: 1080
+  fps: 30
+  video_codec: libx264         # H.264
+  crf: 20                      # quality: lower = better and bigger (18-23 is sensible)
+  preset: medium               # ultrafast ... medium ... slow (slower = smaller file, longer wait)
+  audio_rate: 48000
+  audio_bitrate: 192k
