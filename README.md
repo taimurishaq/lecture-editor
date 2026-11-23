@@ -121,3 +121,7 @@ On a laptop CPU, expect the whole run to take roughly one to two times the lengt
 - **Silences are not sped up**: the room noise is probably above the threshold. Raise `silence_threshold` to `0.06` or `0.08`.
 - **Words are clipped at the start or end**: raise `speech_margin_seconds` to `0.5`.
 - **Captions are in the wrong language or garbled**: keep `speech_language: ur`, or try a larger `whisper_model`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
