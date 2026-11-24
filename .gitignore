@@ -32,3 +32,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# AI key for picking clips (never commit it)
+gemini_key.txt

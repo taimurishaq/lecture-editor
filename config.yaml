@@ -43,6 +43,16 @@ outro_path: assets/outro.mp4
 # --- Caption file ---
 export_srt: on                 # on | off  also save output/<name>_final.srt (timed for the final video) to upload to YouTube
 
+# --- YouTube package (needs a Claude API key, see README) ---
+youtube_package: on            # on | off  write output/<name>_youtube.txt: titles, description, chapters, tags
+youtube_model: claude-opus-5-5
+youtube_language: English      # language of the title and description
+youtube_channel_info: ""       # one line about your channel, e.g. "Accounting lectures for ACCA and CA students in Pakistan"
+youtube_footer: ""             # pasted as-is at the end of every description (links, WhatsApp group, etc.)
+# youtube_footer: |
+#   Join the WhatsApp group: https://...
+#   Notes and past papers: https://...
+
 # --- Output ---
 output:
   width: 1920
@@ -53,3 +63,30 @@ output:
   preset: medium               # ultrafast ... medium ... slow (slower = smaller file, longer wait)
   audio_rate: 48000
   audio_bitrate: 192k
+
+# --- Short clips (python edit.py clips input/<file>.mp4) ---
+clips:
+  count: 5                     # how many clips to make
+  min_seconds: 20              # shortest clip
+  max_seconds: 60              # longest clip
+  caption_task: translate      # translate = English captions | transcribe = captions in the spoken language
+  picker: auto                 # auto = Claude (ANTHROPIC_API_KEY), then Gemini (gemini_key.txt), then built-in | claude | gemini | local
+  claude_model: claude-opus-5-5
+  gemini_model: gemini-2.5-flash
+  layout: blur                 # blur = whole frame in the middle, blurred fill (safe for whiteboards/slides) | crop = fill the screen
+  crop_position: center        # for layout: crop -> left | center | right | 0-1
+  cut_pauses_over: 0.8         # remove pauses longer than this many seconds (0 = keep all pauses)
+  pause_noise_db: -30          # audio quieter than this counts as a pause (lower it, e.g. -35, if words get cut)
+  title_overlay: true          # show the clip title at the top
+  loudness_target: -14         # LUFS; -14 is the usual level for Shorts/Reels
+  default_hashtags: ["#shorts"]
+  captions:
+    font: Arial
+    size: 82
+    words_per_line: 3
+    uppercase: true
+    color: white
+    highlight_color: yellow    # the word being spoken
+    outline_color: black
+    outline_width: 6
+    position_from_bottom: 480  # pixels from the bottom of the 1080x1920 frame
