@@ -43,7 +43,7 @@ Double-click **`Lecture Editor.bat`** in the project folder. A window opens:
 1. **Add videos** (or **Add a folder**) to pick your lectures.
 2. Tick the options you want:
    - *Let me check the captions*: the tool stops after the captions are written so you can fix them, then you press **Finish videos**.
-   - *Write a YouTube title, description and chapters*: needs a Claude API key (see [YouTube package](#youtube-package)); press **Set API key...** once to save it.
+   - *Make a YouTube title, description and chapters*: free. When the videos are finished, press **Copy prompt** and paste it into ChatGPT or Gemini (see [YouTube package](#youtube-package)).
 3. Press **Start** and watch the progress. **Open finished videos** shows the results.
 
 The window runs the same tool described below, so all settings still come from `config.yaml` (**Open settings** opens it).
@@ -90,15 +90,31 @@ python edit.py finalize lecture1 lecture2  # ...finalize the ones you have check
 
 ## YouTube package
 
-When a video is finished, the tool can also ask Claude to write `output/lecture1_youtube.txt` with:
+When a video is finished, the tool also writes **`output/lecture1_youtube_prompt.txt`**: a ready-made request with the lecture's timed captions. Paste it into a free AI chat (ChatGPT, Gemini or Claude.ai in your browser, no paid key needed) and it answers with:
 
 - three title options,
-- a description with **chapters** (clickable timestamps on YouTube) already in the right places for the final video, your `youtube_footer` and hashtags,
+- a description with **chapters** (clickable timestamps on YouTube) already timed for the final video, your `youtube_footer` and hashtags,
 - tags to paste into YouTube Studio.
 
-It reads the captions, so fix those first. It costs roughly US$0.10 to $0.20 per hour of lecture with the default model, paid from your Anthropic account.
+It reads the captions, so fix those first.
 
-**Set up once:**
+**In the app window:** when the videos are finished, a YouTube panel appears (or press **YouTube prompts** any time). Pick a lecture, press **Copy prompt**, press **ChatGPT** or **Gemini** to open the site, paste with Ctrl+V and send. Copy its answer into YouTube Studio. Check the chapter times look sensible before publishing.
+
+**Without the app:** open the `_youtube_prompt.txt` file in Notepad, press Ctrl+A, Ctrl+C, and paste it into the chat.
+
+A one-hour lecture makes a long prompt. ChatGPT and Gemini accept it (they may show it as an attached file); if a site refuses, try the other.
+
+Optionally fill in `youtube_channel_info` (one line about your channel) and `youtube_footer` (links to put under every description) in `config.yaml`. To make the prompt again, for example after editing the captions:
+
+```powershell
+python edit.py youtube lecture1
+```
+
+Turn it off with `youtube_package: off`, or for one run with `--no-youtube`.
+
+### Optional: fully automatic with a paid Claude API key
+
+If you would rather not copy and paste, set `youtube_mode: claude` in `config.yaml`. Claude then writes `output/lecture1_youtube.txt` directly. This costs roughly US$0.10 to $0.20 per hour of lecture, paid from your Anthropic account. The same key also improves short clips (see below).
 
 1. Create an API key at <https://console.anthropic.com> (Settings > API keys) and add some credit.
 2. Save it for your Windows user, either with **Set API key...** in the app window, or in PowerShell:
@@ -108,15 +124,8 @@ It reads the captions, so fix those first. It costs roughly US$0.10 to $0.20 per
    ```
 
    then close and reopen PowerShell. Never put the key in `config.yaml` or commit it to Git.
-3. Optionally fill in `youtube_channel_info` and `youtube_footer` in `config.yaml`.
 
-If there is no key or no internet, the video is still finished; only the YouTube text is skipped. To make it later, or again after editing the captions:
-
-```powershell
-python edit.py youtube lecture1
-```
-
-Turn it off with `youtube_package: off`, or for one run with `--no-youtube`.
+If there is no key or no internet, the video is still finished; only the YouTube text is skipped.
 
 ## Short clips (Shorts, Reels, TikTok)
 
@@ -192,7 +201,8 @@ Every option lives in `config.yaml`. The ones you are most likely to change:
 | `caption_style` | white, black outline, bottom center, medium | Font, size, colors and position of the captions |
 | `logo_watermark` | `off` | `on` adds `assets/logo.png` |
 | `export_srt` | `on` | Also save `output/<name>_final.srt` for YouTube |
-| `youtube_package` | `on` | Write `output/<name>_youtube.txt` (needs a Claude API key) |
+| `youtube_package` | `on` | Make the YouTube title, description and chapters |
+| `youtube_mode` | `prompt` | `prompt` (free, paste into a chat site) or `claude` (automatic, paid API key) |
 | `youtube_channel_info`, `youtube_footer` | empty | A line about your channel for Claude, and text added to every description |
 | `output` | 1920x1080, 30 fps, H.264, 48 kHz | Final video format |
 
@@ -228,7 +238,7 @@ On a laptop CPU, expect the whole run to take roughly one to two times the lengt
 - **Silences are not sped up**: the room noise is probably above the threshold. Raise `silence_threshold` to `0.06` or `0.08`.
 - **Words are clipped at the start or end**: raise `speech_margin_seconds` to `0.5`.
 - **Captions are in the wrong language or garbled**: keep `speech_language: ur`, or try a larger `whisper_model`.
-- **"No Claude API key found"**: see [YouTube package](#youtube-package). After `setx`, reopen PowerShell (or the app window) so it sees the key.
+- **"No Claude API key found"**: only with `youtube_mode: claude`; see [YouTube package](#youtube-package). After `setx`, reopen PowerShell (or the app window) so it sees the key.
 - **The same subject words keep coming out wrong**: add them to `glossary` in `config.yaml`, spelled the way you want them.
 
 ## License

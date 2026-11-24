@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
@@ -50,6 +51,20 @@ def saved_api_key() -> str:
             return str(winreg.QueryValueEx(reg, "ANTHROPIC_API_KEY")[0])
     except OSError:
         return ""
+
+
+def youtube_mode() -> str:
+    """'prompt' (free copy-paste, the default) or 'claude' (paid API), from config.yaml."""
+    try:
+        import yaml
+        with open(ROOT / "config.yaml", encoding="utf-8") as f:
+            return str((yaml.safe_load(f) or {}).get("youtube_mode") or "prompt").strip().lower()
+    except Exception:
+        return "prompt"
+
+
+CHAT_SITES = [("ChatGPT", "https://chatgpt.com/"), ("Gemini", "https://gemini.google.com/app"),
+              ("Claude.ai", "https://claude.ai/new")]
 
 
 def open_path(path: Path) -> None:
@@ -115,8 +130,10 @@ class App:
         self.youtube = tk.BooleanVar(value=True)
         ttk.Checkbutton(opts, text="Let me check the captions before the video is finished",
                         variable=self.review).grid(row=0, column=0, columnspan=3, sticky="w")
-        ttk.Checkbutton(opts, text="Write a YouTube title, description and chapters (uses Claude)",
-                        variable=self.youtube).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        yt_text = ("Write a YouTube title, description and chapters (uses your Claude API key)"
+                   if youtube_mode() == "claude" else
+                   "Make a YouTube title, description and chapters (free: paste into ChatGPT or Gemini)")
+        ttk.Checkbutton(opts, text=yt_text, variable=self.youtube).grid(row=1, column=0, sticky="w", pady=(4, 0))
         self.key_label = ttk.Label(opts, foreground="#555")
         self.key_label.grid(row=1, column=1, sticky="w", padx=8, pady=(4, 0))
         ttk.Button(opts, text="Set API key...", command=self.set_api_key).grid(row=1, column=2, sticky="e",
@@ -145,6 +162,8 @@ class App:
         self.stop_btn = ttk.Button(row, text="Stop", command=self.stop, state="disabled")
         self.stop_btn.pack(side="left", padx=6)
         ttk.Button(row, text="Open finished videos", command=self.open_output).pack(side="right")
+        ttk.Button(row, text="YouTube prompts", command=lambda: self.show_youtube_box(None)).pack(side="right",
+                                                                                              padx=6)
 
         self.overall = ttk.Label(run, text="Add one or more lectures, then press Start (full lecture) "
                                            "or Make clips (short clips).", style="Status.TLabel")
@@ -167,6 +186,23 @@ class App:
         rbtn.pack(side="left", padx=(8, 0))
         ttk.Button(rbtn, text="Open captions", command=self.open_srt).pack(fill="x", pady=2)
         ttk.Button(rbtn, text="Finish videos", style="Accent.TButton", command=self.finish).pack(fill="x", pady=2)
+
+        # YouTube prompt panel (free route): copy the prompt, paste it into a chat site
+        self.yt_box = ttk.Frame(run)
+        ttk.Label(self.yt_box, text="YouTube text: press Copy prompt, open a chat site, paste (Ctrl+V) and send. "
+                  "Copy its answer into YouTube Studio.", wraplength=680).pack(anchor="w")
+        yrow = ttk.Frame(self.yt_box)
+        yrow.pack(fill="x", pady=4)
+        self.yt_list = tk.Listbox(yrow, height=3, font=("Segoe UI", 10), activestyle="none", exportselection=False)
+        self.yt_list.pack(side="left", fill="x", expand=True)
+        self.yt_list.bind("<Double-Button-1>", lambda _e: self.copy_prompt())
+        ybtn = ttk.Frame(yrow)
+        ybtn.pack(side="left", padx=(8, 0))
+        ttk.Button(ybtn, text="Copy prompt", style="Accent.TButton", command=self.copy_prompt).pack(fill="x", pady=2)
+        sites = ttk.Frame(ybtn)
+        sites.pack(fill="x", pady=2)
+        for name, url in CHAT_SITES:
+            ttk.Button(sites, text=name, width=9, command=lambda u=url: webbrowser.open(u)).pack(side="left", padx=1)
 
         self.log = ScrolledText(run, height=10, font=("Consolas", 9), wrap="word", state="disabled",
                                 background="#fbfbfb")
@@ -211,7 +247,7 @@ class App:
 
     # ------------------------------------------------------------------ API key
     def refresh_key_label(self) -> None:
-        self.key_label.config(text="API key: set" if saved_api_key() else "API key: not set")
+        self.key_label.config(text="Claude key (optional): set" if saved_api_key() else "Claude key (optional): not set")
 
     def set_api_key(self) -> None:
         key = simpledialog.askstring(
@@ -252,13 +288,14 @@ class App:
         if not self.videos:
             messagebox.showinfo("Lecture Editor", "Add at least one lecture first.")
             return
-        if self.youtube.get() and not saved_api_key():
+        if self.youtube.get() and youtube_mode() == "claude" and not saved_api_key():
             if not messagebox.askyesno(
                     "Lecture Editor",
                     "No Claude API key is set, so the YouTube title and description will be skipped.\n\n"
                     "Continue anyway?"):
                 return
         self.review_box.pack_forget()
+        self.yt_box.pack_forget()
         self.clear_log()
         self.started_at = time.time()
         files = [str(v) for v in self.videos]
@@ -289,6 +326,7 @@ class App:
                     "Continue with the simple picker?"):
                 return
         self.review_box.pack_forget()
+        self.yt_box.pack_forget()
         self.clear_log()
         self.started_at = time.time()
         self.launch(["clips", *[str(v) for v in self.videos], "--count", str(count)], phase="clips")
@@ -299,6 +337,7 @@ class App:
             messagebox.showinfo("Lecture Editor", "There is nothing waiting to be finished.")
             return
         self.review_box.pack_forget()
+        self.yt_box.pack_forget()
         self.launch(["finalize", *stems, *self.youtube_flags()], phase="finalize")
 
     def launch(self, args: list[str], phase: str) -> None:
@@ -409,6 +448,8 @@ class App:
             self.overall.config(text=f"Done in {mins}. Press 'Open finished videos' to see them.")
             self.step.config(text="")
             self.bar.config(value=100)
+            if self.youtube.get() and self.phase in {"all", "finalize"}:
+                self.show_youtube_box(self.started_at - 1, quiet=True)
         else:
             self.overall.config(text=f"Finished with problems ({mins}). See the messages below.")
 
@@ -424,6 +465,35 @@ class App:
                            creationflags=NO_WINDOW)
         else:
             self.proc.terminate()
+
+    def show_youtube_box(self, since: float | None, quiet: bool = False) -> None:
+        """List YouTube prompt files: those written since a time, or all of them (newest first)."""
+        prompts = sorted(OUTPUT.glob("*_youtube_prompt.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if since is not None:
+            prompts = [p for p in prompts if p.stat().st_mtime >= since]
+        if not prompts:
+            if not quiet:
+                messagebox.showinfo("Lecture Editor", "No YouTube prompts yet. They are made when a video is "
+                                                      "finished with the YouTube option ticked.")
+            return
+        self.yt_list.delete(0, "end")
+        for p in prompts:
+            self.yt_list.insert("end", p.name[:-len("_youtube_prompt.txt")])
+        self.yt_list.selection_set(0)
+        self.review_box.pack_forget()
+        self.yt_box.pack(fill="x", pady=(0, 8), before=self.log)
+
+    def copy_prompt(self) -> None:
+        sel = self.yt_list.curselection()
+        if not sel:
+            return
+        name = self.yt_list.get(sel[0])
+        text = (OUTPUT / f"{name}_youtube_prompt.txt").read_text(encoding="utf-8")
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.root.update()                          # keep it on the clipboard after this call
+        self.overall.config(text=f"Prompt for {name} copied. Open a chat site and paste it (Ctrl+V). "
+                                 "Keep this window open until you have pasted.")
 
     def open_srt(self) -> None:
         sel = self.srt_list.curselection()

@@ -55,6 +55,7 @@ DEFAULTS = {
     "outro_path": "assets/outro.mp4",
     "export_srt": True,
     "youtube_package": True,
+    "youtube_mode": "prompt",
     "youtube_model": "claude-opus-5-5",
     "youtube_language": "English",
     "youtube_channel_info": "",
@@ -753,10 +754,9 @@ def cmd_finalize(name: str, cfg: dict, youtube: bool = True) -> Path:
 
     if youtube and is_on(cfg.get("youtube_package", True)):
         if burn_srt:
-            say("\n[+] Writing YouTube title, description and chapters")
             text = shift_srt(srt.read_text(encoding="utf-8-sig", errors="replace"), lecture_start)
             try:
-                make_youtube_package(stem, text, facts["duration"], lecture_start, cfg)
+                make_youtube(stem, text, facts["duration"], lecture_start, cfg)
             except EditError as e:
                 warn(f"YouTube package skipped: {e}")
         else:
@@ -936,8 +936,75 @@ def make_youtube_package(stem: str, srt_text: str, duration: float, lecture_star
     return path
 
 
+def write_youtube_prompt(stem: str, srt_text: str, duration: float, lecture_start: float, cfg: dict) -> Path:
+    """Free route: a ready-made prompt to paste into ChatGPT, Gemini or Claude.ai in the browser."""
+    transcript = srt_to_transcript(srt_text)
+    if not transcript:
+        raise EditError("the caption file is empty.")
+    about = str(cfg.get("youtube_channel_info") or "").strip()
+    footer = str(cfg.get("youtube_footer") or "").strip()
+    language = cfg.get("youtube_language") or "English"
+    last = youtube_time(max(0.0, duration - 10))
+
+    if lecture_start >= 10:
+        first = (f'- the first chapter is "0:00 Intro"; the next one is {youtube_time(lecture_start)} '
+                 "or later, where the lecture begins")
+    else:
+        first = "- the first chapter starts at 0:00"
+    footer_rule = f"Then a blank line and this text exactly as written:\n{footer}\n" if footer else ""
+
+    prompt = f"""Write the YouTube upload text for my recorded lecture. Write it in {language}.
+{f"About my channel: {about}" + chr(10) if about else ""}
+The video is {youtube_time(duration)} long.{f" It starts with a {youtube_time(lecture_start)} intro." if lecture_start else ""}
+Below are the lecture's captions with timestamps that match the final video. They were
+machine-translated from mixed Urdu and English speech, so ignore small wording errors and
+spell subject terms correctly in what you write.
+
+Reply with exactly these three parts and nothing else.
+
+TITLES
+Three title options, each under 70 characters, specific to what this lecture teaches, in
+words a student would search for. No clickbait, no ALL CAPS, no emoji.
+
+DESCRIPTION
+Put this whole part inside one code block so I can copy it in one go:
+2 to 4 short paragraphs on what the lecture covers and who it helps.
+Then a blank line, the line "Chapters:", and the chapter list.
+{footer_rule}Then a blank line and 2 or 3 hashtags.
+
+Chapter rules (YouTube ignores all chapters if one rule is broken):
+- one line per chapter: the time, a space, a short title of 2 to 6 words, e.g. "4:35 Accrual basis"
+{first}
+- at least 3 chapters, each at least 30 seconds after the one before
+- use the caption times below where each new topic starts; no chapter after {last}
+
+TAGS
+8 to 15 search phrases separated by commas, most specific first.
+
+<captions>
+{transcript}
+</captions>
+"""
+    path = OUTPUT / f"{stem}_youtube_prompt.txt"
+    path.write_text(prompt, encoding="utf-8")
+    info(f"{path.relative_to(ROOT)}  (copy it into free ChatGPT, Gemini or Claude.ai; "
+         f"{len(transcript.split())} words of captions)")
+    return path
+
+
+def make_youtube(stem: str, srt_text: str, duration: float, lecture_start: float, cfg: dict) -> Path:
+    mode = str(cfg.get("youtube_mode") or "prompt").strip().lower()
+    if mode == "prompt":
+        say("\n[+] Writing the YouTube prompt (title, description, chapters)")
+        return write_youtube_prompt(stem, srt_text, duration, lecture_start, cfg)
+    if mode == "claude":
+        say("\n[+] Writing YouTube title, description and chapters")
+        return make_youtube_package(stem, srt_text, duration, lecture_start, cfg)
+    raise EditError("config.yaml: youtube_mode must be 'prompt' (free) or 'claude' (paid API).")
+
+
 def cmd_youtube(name: str, cfg: dict) -> Path:
-    """Write (or rewrite) output/<name>_youtube.txt from an already finished video."""
+    """Write (or rewrite) the YouTube prompt or text from an already finished video."""
     stem = Path(name).stem
     if stem.endswith("_final"):
         stem = stem[:-len("_final")]
@@ -949,8 +1016,8 @@ def cmd_youtube(name: str, cfg: dict) -> Path:
     intro = resolve(cfg["intro_path"])
     lecture_start = probe(intro)["duration"] if intro.exists() else 0.0
     say(f"YouTube package for {stem}")
-    return make_youtube_package(stem, srt_out.read_text(encoding="utf-8-sig", errors="replace"),
-                                probe(final)["duration"], lecture_start, cfg)
+    return make_youtube(stem, srt_out.read_text(encoding="utf-8-sig", errors="replace"),
+                        probe(final)["duration"], lecture_start, cfg)
 
 
 # ----------------------------------------------------------------------------
@@ -1028,7 +1095,7 @@ def main() -> int:
     p.add_argument("--no-youtube", action="store_true", help="skip the YouTube title/description/chapters")
     p.add_argument("--redo", action="store_true",
                    help="with a folder: also redo videos that already have output/<name>_final.mp4")
-    p = sub.add_parser("youtube", help="write output/<name>_youtube.txt for finished videos")
+    p = sub.add_parser("youtube", help="write the YouTube prompt (or text) for finished videos")
     p.add_argument("name", nargs="+", help="one or more lecture names, e.g. lecture1 lecture2")
     p = sub.add_parser("clips", help="cut a long video into vertical short clips with captions")
     p.add_argument("video", nargs="+", help="videos (input/lecture1.mp4) and/or folders of videos (input/)")

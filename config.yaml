@@ -43,9 +43,11 @@ outro_path: assets/outro.mp4
 # --- Caption file ---
 export_srt: on                 # on | off  also save output/<name>_final.srt (timed for the final video) to upload to YouTube
 
-# --- YouTube package (needs a Claude API key, see README) ---
-youtube_package: on            # on | off  write output/<name>_youtube.txt: titles, description, chapters, tags
-youtube_model: claude-opus-5-5
+# --- YouTube title, description, chapters and tags ---
+youtube_package: on            # on | off
+youtube_mode: prompt           # prompt: free. Writes output/<name>_youtube_prompt.txt to paste into ChatGPT, Gemini or Claude.ai
+                               # claude: automatic, needs a paid Claude API key. Writes output/<name>_youtube.txt
+youtube_model: claude-opus-5-5 # only used when youtube_mode is claude
 youtube_language: English      # language of the title and description
 youtube_channel_info: ""       # one line about your channel, e.g. "Accounting lectures for ACCA and CA students in Pakistan"
 youtube_footer: ""             # pasted as-is at the end of every description (links, WhatsApp group, etc.)
