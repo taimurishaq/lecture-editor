@@ -5,6 +5,11 @@ whisper_model: medium          # small (faster, weaker) | medium | large-v3 (bes
 speech_language: ur            # ur works best for mixed Urdu + English | auto | en | hi
 max_caption_chars: 84          # longer captions are split into several shorter ones
 
+# Subject words Whisper often gets wrong. Spell them exactly as you want them in the captions.
+# Keep the list short (roughly 10-30 words); a very long list stops helping.
+glossary: []
+# glossary: [debit, credit, ledger, depreciation, IFRS, ACCA]
+
 # --- Silence handling ---
 silence_min_seconds: 2         # only silences longer than this are sped up
 silence_speed: 3               # playback speed for silent parts
@@ -34,6 +39,9 @@ logo_height_percent: 10        # logo height as % of video height
 # --- Intro / outro ---
 intro_path: assets/intro.mp4
 outro_path: assets/outro.mp4
+
+# --- Caption file ---
+export_srt: on                 # on | off  also save output/<name>_final.srt (timed for the final video) to upload to YouTube
 
 # --- Output ---
 output:

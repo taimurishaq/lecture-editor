@@ -52,7 +52,7 @@ When the captions look right:
 python edit.py finalize lecture1
 ```
 
-The finished video is saved as `output/lecture1_final.mp4`.
+The finished video is saved as `output/lecture1_final.mp4`, with a caption file next to it, `output/lecture1_final.srt`. The captions are already burned into the video. Upload the `.srt` to YouTube as well (Subtitles > Add > Upload file > With timing) so the captions are searchable, can be switched off, and can be auto-translated. Its times already allow for the intro. Set `export_srt: off` if you do not want it.
 
 To do both steps in one go without reviewing the captions:
 
@@ -61,6 +61,20 @@ python edit.py all input/lecture1.mp4 --no-review
 ```
 
 Without `--no-review`, `all` pauses after the captions are written and waits for you to press Enter.
+
+### Many lectures at once
+
+Give a folder instead of a file to handle every video in it:
+
+```powershell
+python edit.py all input/ --no-review      # leave it running overnight
+python edit.py process input/              # or: captions for all, review them, then...
+python edit.py finalize lecture1 lecture2  # ...finalize the ones you have checked
+```
+
+- Videos are done in name order. If one fails, the tool notes why and moves on to the next; a list of failures is shown at the end.
+- `all` with a folder skips videos that already have a finished file in `output/`, so you can run it again after adding new recordings. Add `--redo` to make them all again.
+- Without `--no-review`, `all` processes every video first, then pauses once so you can review all the caption files, then finalizes them.
 
 ## Intro, outro and logo
 
@@ -80,6 +94,7 @@ Every option lives in `config.yaml`. The ones you are most likely to change:
 | --- | --- | --- |
 | `whisper_model` | `medium` | `small` is faster and less accurate, `large-v3` is the most accurate and very slow on a CPU |
 | `speech_language` | `ur` | Best for mixed Urdu and English. Use `auto` to let Whisper guess |
+| `glossary` | empty | Subject words to spell correctly, e.g. `[debit, credit, IFRS]` |
 | `silence_min_seconds` | `2` | Only silences longer than this are sped up |
 | `silence_speed` | `3` | Playback speed for silent parts |
 | `silent_audio` | `mute` | `mute` silences the sped-up parts, `keep` leaves their audio in |
@@ -87,6 +102,7 @@ Every option lives in `config.yaml`. The ones you are most likely to change:
 | `silence_threshold` | `0.04` | Raise it if background noise stops silences from being detected |
 | `caption_style` | white, black outline, bottom center, medium | Font, size, colors and position of the captions |
 | `logo_watermark` | `off` | `on` adds `assets/logo.png` |
+| `export_srt` | `on` | Also save `output/<name>_final.srt` for YouTube |
 | `output` | 1920x1080, 30 fps, H.264, 48 kHz | Final video format |
 
 To try different settings without touching the main file, copy it and pass `--config`:
@@ -121,6 +137,7 @@ On a laptop CPU, expect the whole run to take roughly one to two times the lengt
 - **Silences are not sped up**: the room noise is probably above the threshold. Raise `silence_threshold` to `0.06` or `0.08`.
 - **Words are clipped at the start or end**: raise `speech_margin_seconds` to `0.5`.
 - **Captions are in the wrong language or garbled**: keep `speech_language: ur`, or try a larger `whisper_model`.
+- **The same subject words keep coming out wrong**: add them to `glossary` in `config.yaml`, spelled the way you want them.
 
 ## License
 

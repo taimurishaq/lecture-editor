@@ -3,8 +3,9 @@
 
 Usage:
     python edit.py process input/<file>.mp4
-    python edit.py finalize <file>
+    python edit.py finalize <file> [<file> ...]
     python edit.py all input/<file>.mp4 --no-review
+    python edit.py all input/            (every video in the folder)
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ DEFAULTS = {
     "whisper_model": "medium",
     "speech_language": "ur",
     "max_caption_chars": 84,
+    "glossary": [],
     "silence_min_seconds": 2,
     "silence_speed": 3,
     "silent_audio": "mute",
@@ -49,6 +51,7 @@ DEFAULTS = {
     "logo_height_percent": 10,
     "intro_path": "assets/intro.mp4",
     "outro_path": "assets/outro.mp4",
+    "export_srt": True,
     "output": {
         "width": 1920,
         "height": 1080,
@@ -470,6 +473,22 @@ def segment_words(seg) -> list[tuple[float, float, str]]:
     return out
 
 
+def glossary_terms(cfg: dict) -> list[str]:
+    """Subject words from config.yaml, as a list or a comma-separated string."""
+    raw = cfg.get("glossary") or []
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    if not isinstance(raw, list):
+        raise EditError("config.yaml: glossary must be a list of words, e.g. [debit, credit, IFRS].")
+    terms, seen = [], set()
+    for item in raw:
+        term = str(item).strip()
+        if term and term.lower() not in seen:
+            seen.add(term.lower())
+            terms.append(term)
+    return terms
+
+
 def make_captions(video: Path, srt_path: Path, cfg: dict, duration: float) -> int:
     try:
         from faster_whisper import WhisperModel
@@ -480,6 +499,14 @@ def make_captions(video: Path, srt_path: Path, cfg: dict, duration: float) -> in
     language = str(cfg.get("speech_language") or "auto").lower()
     info(f"Loading Whisper model '{model_name}' on CPU (the first run downloads it; this can take a while)...")
     model = WhisperModel(model_name, device="cpu", compute_type="int8")
+    extra = {}
+    terms = glossary_terms(cfg)
+    if terms:
+        # hotwords are given to Whisper for every 30-second window, unlike initial_prompt
+        # which (with condition_on_previous_text off) only helps the first one.
+        extra["hotwords"] = ", ".join(terms)
+        info(f"Glossary: {len(terms)} word(s) to help spelling ({', '.join(terms[:6])}"
+             f"{', ...' if len(terms) > 6 else ''})")
     info("Translating speech to English captions...")
     segments, _ = model.transcribe(
         str(video),
@@ -489,6 +516,7 @@ def make_captions(video: Path, srt_path: Path, cfg: dict, duration: float) -> in
         beam_size=5,
         condition_on_previous_text=False,
         word_timestamps=True,
+        **extra,
     )
     captions: list[tuple[float, float, str]] = []
     last_pct, started = -1, time.time()
@@ -592,6 +620,17 @@ def caption_style(cfg: dict) -> str:
     ])
 
 
+SRT_TIME = re.compile(r"(\d+):(\d{2}):(\d{2})[,.](\d{3})")
+
+
+def shift_srt(text: str, offset: float) -> str:
+    """Move every caption time later by offset seconds (to make room for the intro)."""
+    def move(m: re.Match) -> str:
+        h, mi, s, ms = (int(g) for g in m.groups())
+        return srt_time(h * 3600 + mi * 60 + s + ms / 1000 + offset)
+    return SRT_TIME.sub(move, text)
+
+
 def srt_has_captions(path: Path) -> bool:
     return "-->" in path.read_text(encoding="utf-8-sig", errors="replace")
 
@@ -653,8 +692,11 @@ def cmd_finalize(name: str, cfg: dict) -> Path:
     inputs: list[str] = []
     graph: list[str] = []
     total = 0.0
+    lecture_start = 0.0
     for i, (label, path) in enumerate(parts):
         facts = probe(path)
+        if label == "lecture":
+            lecture_start = total
         total += facts["duration"]
         inputs += ["-i", str(path)]
         video = (f"[{i}:v:0]scale={W}:{H}:force_original_aspect_ratio=decrease,"
@@ -695,6 +737,12 @@ def cmd_finalize(name: str, cfg: dict) -> Path:
     size_mb = final.stat().st_size / 1_048_576
     info(f"{final.relative_to(ROOT)}  ({fmt_duration(facts['duration'])}, "
          f"{facts['width']}x{facts['height']}, {size_mb:.0f} MB)")
+    if burn_srt and is_on(cfg.get("export_srt", True)):
+        srt_out = final.with_suffix(".srt")
+        text = srt.read_text(encoding="utf-8-sig", errors="replace")
+        srt_out.write_text(shift_srt(text, lecture_start), encoding="utf-8")
+        note = f", shifted {lecture_start:.1f}s for the intro" if lecture_start else ""
+        info(f"{srt_out.relative_to(ROOT)}  (caption file for YouTube{note})")
     say(f"\nDone. Your video is ready: {final}")
     return final
 
@@ -702,6 +750,43 @@ def cmd_finalize(name: str, cfg: dict) -> Path:
 # ----------------------------------------------------------------------------
 # Entry point
 # ----------------------------------------------------------------------------
+
+def collect_videos(raw: str) -> list[Path]:
+    """A single video, or every video directly inside a folder (sorted by name)."""
+    path = Path(raw)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    if not path.is_dir():
+        return [check_input_video(raw)]
+    found = sorted((p for p in path.iterdir() if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS),
+                   key=lambda p: p.name.lower())
+    if not found:
+        raise EditError(f"No videos found in {path} (expected: " + ", ".join(sorted(VIDEO_EXTENSIONS)) + ").")
+    return found
+
+
+def run_batch(items: list, action, label, verb: str, many: bool) -> tuple[list, list[tuple[str, str]]]:
+    """Run action on each item. In batch mode (many) one failure does not stop the rest."""
+    done, failed = [], []
+    for n, item in enumerate(items, 1):
+        if many:
+            say(f"\n{'=' * 70}\n  {verb} video {n} of {len(items)}: {label(item)}\n{'=' * 70}")
+        try:
+            done.append(action(item))
+        except EditError as e:
+            if not many:
+                raise
+            say(f"\nERROR ({label(item)}): {e}\n      Moving on to the next video.")
+            failed.append((label(item), str(e).splitlines()[0]))
+    return done, failed
+
+
+def print_failures(failed: list[tuple[str, str]]) -> None:
+    if failed:
+        say(f"\n{len(failed)} video(s) failed:")
+        for name, reason in failed:
+            say(f"  - {name}: {reason}")
+
 
 def main() -> int:
     for stream in (sys.stdout, sys.stderr):
@@ -715,39 +800,66 @@ def main() -> int:
     parser.add_argument("--config", default=str(ROOT / "config.yaml"), help="settings file (default: config.yaml)")
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("process", help="clean audio, speed up silences, write captions for review")
-    p.add_argument("video", help="path to the lecture, e.g. input/lecture1.mp4")
+    p.add_argument("video", help="a lecture (input/lecture1.mp4) or a folder of lectures (input/)")
     p = sub.add_parser("finalize", help="burn captions, add intro/outro, write output/<file>_final.mp4")
-    p.add_argument("name", help="the lecture name, e.g. lecture1")
+    p.add_argument("name", nargs="+", help="one or more lecture names, e.g. lecture1 lecture2")
     p = sub.add_parser("all", help="process then finalize")
-    p.add_argument("video", help="path to the lecture, e.g. input/lecture1.mp4")
+    p.add_argument("video", help="a lecture (input/lecture1.mp4) or a folder of lectures (input/)")
     p.add_argument("--no-review", action="store_true", help="do not pause to review the captions")
+    p.add_argument("--redo", action="store_true",
+                   help="with a folder: also redo videos that already have output/<name>_final.mp4")
     args = parser.parse_args()
 
     started = time.time()
+    by_name = lambda v: v.name
     try:
         cfg = load_config(Path(args.config))
         if args.command == "process":
-            stem = cmd_process(check_input_video(args.video), cfg)
-            say(f"\nStopped for review ({fmt_duration(time.time() - started)} so far).")
-            say(f"  1. Open work/{stem}.srt in a text editor and fix any caption mistakes.")
-            say(f"  2. Then run:  python edit.py finalize {stem}")
-        elif args.command == "finalize":
-            cmd_finalize(args.name, cfg)
-        else:
-            stem = cmd_process(check_input_video(args.video), cfg)
-            if not args.no_review:
-                say(f"\nReview work/{stem}.srt now, save it, then press Enter to continue (Ctrl+C to stop).")
-                input()
-            say("")
-            cmd_finalize(stem, cfg)
-            say(f"Total time: {fmt_duration(time.time() - started)}")
+            stems, failed = run_batch(collect_videos(args.video), lambda v: cmd_process(v, cfg), by_name,
+                                      "Processing", Path(args.video).is_dir())
+            if stems:
+                say(f"\nStopped for review ({fmt_duration(time.time() - started)} so far).")
+                say("  1. Open these caption files in a text editor and fix any mistakes:")
+                for stem in stems:
+                    say(f"       work/{stem}.srt")
+                say(f"  2. Then run:  python edit.py finalize {' '.join(stems)}")
+            print_failures(failed)
+            return 1 if failed else 0
+
+        if args.command == "finalize":
+            _, failed = run_batch(args.name, lambda n: cmd_finalize(n, cfg), str, "Finalizing", len(args.name) > 1)
+            print_failures(failed)
+            return 1 if failed else 0
+
+        videos = collect_videos(args.video)
+        if Path(args.video).is_dir() and not args.redo:
+            finished = [v for v in videos if (OUTPUT / f"{v.stem}_final.mp4").exists()]
+            if finished:
+                say(f"Skipping {len(finished)} video(s) already in output/ (use --redo to make them again): "
+                    + ", ".join(v.name for v in finished))
+                videos = [v for v in videos if v not in finished]
+            if not videos:
+                say("Nothing left to do.")
+                return 0
+        many = Path(args.video).is_dir()
+        stems, failed = run_batch(videos, lambda v: cmd_process(v, cfg), by_name, "Processing", many)
+        if stems and not args.no_review:
+            files = ", ".join(f"work/{s}.srt" for s in stems)
+            say(f"\nReview {files} now, save, then press Enter to continue (Ctrl+C to stop).")
+            input()
+        _, failed_final = run_batch(stems, lambda n: cmd_finalize(n, cfg), str, "Finalizing", many)
+        failed += failed_final
+        say(f"\nTotal time: {fmt_duration(time.time() - started)}")
+        if many:
+            say(f"Finished {len(stems) - len(failed_final)} of {len(videos)} video(s).")
+        print_failures(failed)
+        return 1 if failed else 0
     except EditError as e:
         say(f"\nERROR: {e}")
         return 1
     except KeyboardInterrupt:
         say("\nStopped.")
         return 130
-    return 0
 
 
 if __name__ == "__main__":
