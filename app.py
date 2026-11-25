@@ -91,7 +91,7 @@ class App:
         self.review_proc: subprocess.Popen | None = None   # caption review page server
         self.review_url = ""
 
-        root.title("Lecture Editor")
+        root.title("Granite by Taimur Ishaq")
         root.geometry("900x940")
         root.minsize(780, 720)
         root.configure(bg=BG)
@@ -142,7 +142,7 @@ class App:
         hrow.pack(fill="x", padx=22, pady=16)
         titles = tk.Frame(hrow, bg=HEADER)
         titles.pack(side="left")
-        tk.Label(titles, text="Lecture Editor", bg=HEADER, fg="#ffffff",
+        tk.Label(titles, text="Granite by Taimur Ishaq", bg=HEADER, fg="#ffffff",
                  font=("Segoe UI", 18, "bold")).pack(anchor="w")
         tk.Label(titles, text="Get your lecture videos ready to post, and cut short clips.", bg=HEADER,
                  fg="#aab4c5", font=("Segoe UI", 10)).pack(anchor="w")
@@ -299,7 +299,7 @@ class App:
             found = sorted((p for p in Path(folder).iterdir()
                             if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS), key=lambda p: p.name.lower())
             if not found:
-                messagebox.showinfo("Lecture Editor", "No videos were found in that folder.")
+                messagebox.showinfo("Granite", "No videos were found in that folder.")
             self.add_paths(found)
 
     def add_paths(self, paths) -> None:
@@ -348,11 +348,11 @@ class App:
             result = subprocess.run(["setx", "ANTHROPIC_API_KEY", key], capture_output=True, text=True,
                                     creationflags=NO_WINDOW)
             if result.returncode != 0:
-                messagebox.showerror("Lecture Editor", "Could not save the key:\n" + result.stderr.strip())
+                messagebox.showerror("Granite", "Could not save the key:\n" + result.stderr.strip())
                 return
         os.environ["ANTHROPIC_API_KEY"] = key
         self.refresh_key_label()
-        messagebox.showinfo("Lecture Editor", "API key saved.")
+        messagebox.showinfo("Granite", "API key saved.")
 
     # ------------------------------------------------------------------ running
     def busy(self) -> bool:
@@ -372,11 +372,11 @@ class App:
         if self.busy():
             return
         if not self.videos:
-            messagebox.showinfo("Lecture Editor", "Please add a video first.")
+            messagebox.showinfo("Granite", "Please add a video first.")
             return
         if self.youtube.get() and youtube_mode() == "claude" and not saved_api_key():
             if not messagebox.askyesno(
-                    "Lecture Editor",
+                    "Granite",
                     "You have not added a Claude key, so the YouTube title and description will be skipped.\n\n"
                     "Continue anyway?"):
                 return
@@ -396,17 +396,17 @@ class App:
         if self.busy():
             return
         if not self.videos:
-            messagebox.showinfo("Lecture Editor", "Please add a video first.")
+            messagebox.showinfo("Granite", "Please add a video first.")
             return
         try:
             count = max(1, min(20, int(self.clip_count.get())))
         except (tk.TclError, ValueError):
-            messagebox.showinfo("Lecture Editor", "Type a number from 1 to 20 for how many clips you want.")
+            messagebox.showinfo("Granite", "Type a number from 1 to 20 for how many clips you want.")
             return
         use_ai = self.clips_ai.get()
         if use_ai and not saved_api_key() and not (ROOT / "gemini_key.txt").exists():
             if not messagebox.askyesno(
-                    "Lecture Editor",
+                    "Granite",
                     "'Use AI to choose the best parts' is ticked, but you have no AI key.\n\n"
                     "Press Yes to make the clips without AI this time.\n"
                     "Press No to go back and add a key."):
@@ -422,7 +422,7 @@ class App:
     def finish(self) -> None:
         stems = [s for s in self.after_process if (WORK / f"{s}_fast.mp4").exists()]
         if not stems:
-            messagebox.showinfo("Lecture Editor", "There is nothing waiting to be finished.")
+            messagebox.showinfo("Granite", "There is nothing waiting to be finished.")
             return
         if self.review_proc and self.review_proc.poll() is None:
             time.sleep(1.5)                         # let the page's last autosave land
@@ -548,7 +548,7 @@ class App:
     def stop(self) -> None:
         if not self.busy():
             return
-        if not messagebox.askyesno("Lecture Editor", "Stop now? The video being worked on will need to start again."):
+        if not messagebox.askyesno("Granite", "Stop now? The video being worked on will need to start again."):
             return
         self.stopped = True
         if sys.platform == "win32":                 # also stops FFmpeg / auto-editor started by edit.py
@@ -564,7 +564,7 @@ class App:
             prompts = [p for p in prompts if p.stat().st_mtime >= since]
         if not prompts:
             if not quiet:
-                messagebox.showinfo("Lecture Editor", "No YouTube prompts yet. They appear after a video is "
+                messagebox.showinfo("Granite", "No YouTube prompts yet. They appear after a video is "
                                                       "finished with the YouTube box ticked.")
             return
         self.yt_list.delete(0, "end")
@@ -655,7 +655,7 @@ class App:
 
     def on_close(self) -> None:
         if self.busy():
-            if not messagebox.askyesno("Lecture Editor", "Work is still running. Stop it and close?"):
+            if not messagebox.askyesno("Granite", "Work is still running. Stop it and close?"):
                 return
             self.stopped = True
             if sys.platform == "win32":
