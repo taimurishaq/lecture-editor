@@ -636,9 +636,12 @@ def print_plan(plan: dict) -> None:
 # Commands
 # ----------------------------------------------------------------------------
 
-def cmd_clips(src: Path, cfg: dict, count: int | None, model: str | None, fresh: bool, plan_only: bool) -> None:
+def cmd_clips(src: Path, cfg: dict, count: int | None, model: str | None, fresh: bool, plan_only: bool,
+              picker: str | None = None) -> None:
     require_ffmpeg()
     cc = clip_config(cfg)
+    if picker:
+        cc["picker"] = picker
     count = int(count or cc["count"])
     WORK.mkdir(exist_ok=True)
     facts = probe(src)
