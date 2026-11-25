@@ -42,7 +42,7 @@ Double-click **`Lecture Editor.bat`** in the project folder. A window opens:
 
 1. **Add videos** (or **Add a folder**) to pick your lectures.
 2. Tick the options you want:
-   - *Let me check the captions*: the tool stops after the captions are written so you can fix them, then you press **Finish videos**.
+   - *Let me check the captions*: when the captions are written, the [caption review page](#caption-review-page) opens in your browser. Fix them there, then press **Finish videos**.
    - *Make a YouTube title, description and chapters*: free. When the videos are finished, press **Copy prompt** and paste it into ChatGPT or Gemini (see [YouTube package](#youtube-package)).
 3. Press **Start** and watch the progress. **Open finished videos** shows the results.
 
@@ -56,7 +56,13 @@ Put your recording in `input/`, then:
 python edit.py process input/lecture1.mp4
 ```
 
-This cleans the audio, speeds up the silences and writes `work/lecture1.srt`. The tool then stops so you can open the `.srt` file in any text editor and fix caption mistakes. Change only the text lines, not the numbers or the times.
+This cleans the audio, speeds up the silences and writes `work/lecture1.srt`. The tool then stops so you can check the captions:
+
+```powershell
+python edit.py review lecture1
+```
+
+This opens the [caption review page](#caption-review-page). (You can also open the `.srt` file in any text editor; change only the text lines, not the numbers or the times.)
 
 When the captions look right:
 
@@ -72,7 +78,7 @@ To do both steps in one go without reviewing the captions:
 python edit.py all input/lecture1.mp4 --no-review
 ```
 
-Without `--no-review`, `all` pauses after the captions are written and waits for you to press Enter.
+Without `--no-review`, `all` opens the caption review page after the captions are written and continues when you press **Finish review** (or Enter in the terminal).
 
 ### Many lectures at once
 
@@ -87,6 +93,20 @@ python edit.py finalize lecture1 lecture2  # ...finalize the ones you have check
 - Videos are done in name order. If one fails, the tool notes why and moves on to the next; a list of failures is shown at the end.
 - `all` with a folder skips videos that already have a finished file in `output/`, so you can run it again after adding new recordings. Add `--redo` to make them all again.
 - Without `--no-review`, `all` processes every video first, then pauses once so you can review all the caption files, then finalizes them.
+
+## Caption review page
+
+A page in your browser with the lecture video on one side and its captions on the other. It runs only on your computer: nothing is uploaded and it works offline.
+
+- **Click a time** to jump the video there. The caption being spoken is highlighted, and the list follows the video.
+- **Type to fix** a caption. The video shows your corrected text straight away. Empty a caption to remove it.
+- **Find and replace** fixes a word that is wrong everywhere (for example a misheard subject term) in one go.
+- A counter shows each caption's length and turns orange above `max_caption_chars`.
+- Changes **save by themselves** about a second after you stop typing. The first save keeps the original as `work/<name>.srt.before-review`.
+- Shortcuts: Ctrl+Enter replays the caption you are in, Ctrl+Space plays or pauses, Ctrl+S saves.
+- Press **Finish review** when you are done. With several lectures, pick them from the list at the top.
+
+The video on the page is the sped-up version from `work/`, before the intro, outro and burned-in captions are added, so its times match the caption file.
 
 ## YouTube package
 

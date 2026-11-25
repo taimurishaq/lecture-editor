@@ -7,6 +7,7 @@ Usage:
     python edit.py all input/<file>.mp4 --no-review
     python edit.py all input/            (every video in the folder)
     python edit.py youtube <file>        (redo the YouTube title/description/chapters)
+    python edit.py review <file>         (check the captions in your browser, next to the video)
 """
 from __future__ import annotations
 
@@ -1042,6 +1043,49 @@ def collect_videos(raws: list[str]) -> list[Path]:
     return videos
 
 
+def run_review(names: list[str], cfg: dict, enter_continues: bool = False) -> None:
+    """Open the caption review page and wait until 'Finish review' is pressed."""
+    import threading
+    import review
+
+    stems = []
+    for name in names:
+        stem = Path(name).name
+        for suffix in (".srt", "_fast.mp4", ".mp4"):
+            if stem.endswith(suffix):
+                stem = stem[: -len(suffix)]
+        if not (WORK / f"{stem}.srt").exists() or not (WORK / f"{stem}_fast.mp4").exists():
+            raise EditError(f"No captions to review for '{stem}'. Run this first:  python edit.py process input/{stem}.mp4")
+        if stem not in stems:
+            stems.append(stem)
+
+    server = review.start_server(WORK, stems, int(cfg["max_caption_chars"]))
+    say(f"\nCaption review is open in your browser: {server.url}")
+    say("  Fix the captions next to the video; changes save by themselves.")
+    say("  When you are done, press 'Finish review' on the page"
+        + (" (or Enter here; Ctrl+C stops everything)." if enter_continues else " (or Ctrl+C here)."))
+
+    if enter_continues:
+        def wait_for_enter() -> None:
+            try:
+                input()
+                server.done.set()
+            except (EOFError, OSError):
+                pass                                    # no keyboard (e.g. started from the app window)
+        threading.Thread(target=wait_for_enter, daemon=True).start()
+    try:
+        while not server.done.wait(0.5):
+            pass
+        say("  Review finished.")
+    except KeyboardInterrupt:
+        if enter_continues:
+            raise
+        say("\n  Review closed. Your saved changes are kept.")
+    finally:
+        time.sleep(0.3)                                 # let the page get its last answer
+        server.shutdown()
+
+
 def is_batch(raws: list[str]) -> bool:
     return len(raws) > 1 or any(Path(r).is_dir() for r in raws)
 
@@ -1095,6 +1139,8 @@ def main() -> int:
     p.add_argument("--no-youtube", action="store_true", help="skip the YouTube title/description/chapters")
     p.add_argument("--redo", action="store_true",
                    help="with a folder: also redo videos that already have output/<name>_final.mp4")
+    p = sub.add_parser("review", help="check and fix captions in your browser, next to the video")
+    p.add_argument("name", nargs="+", help="one or more lecture names, e.g. lecture1 lecture2")
     p = sub.add_parser("youtube", help="write the YouTube prompt (or text) for finished videos")
     p.add_argument("name", nargs="+", help="one or more lecture names, e.g. lecture1 lecture2")
     p = sub.add_parser("clips", help="cut a long video into vertical short clips with captions")
@@ -1103,6 +1149,8 @@ def main() -> int:
     p.add_argument("--model", help="Whisper model for this run, e.g. base or small")
     p.add_argument("--fresh", action="store_true", help="transcribe again instead of using the saved transcript")
     p.add_argument("--plan-only", action="store_true", help="pick the moments but do not render yet")
+    p.add_argument("--picker", choices=["auto", "claude", "gemini", "local"],
+                   help="who picks the moments; local = no AI (default: clips.picker in config.yaml)")
     p = sub.add_parser("render-clips", help="render clips from work/<file>_clips.json (after editing it)")
     p.add_argument("name", help="the video name, e.g. lecture1")
     p.add_argument("--only", help="render only these clip numbers, e.g. 1,3")
@@ -1122,7 +1170,8 @@ def main() -> int:
                 return 0
             _, failed = run_batch(
                 collect_videos(args.video),
-                lambda v: clips.cmd_clips(v, cfg, args.count, args.model, args.fresh, args.plan_only),
+                lambda v: clips.cmd_clips(v, cfg, args.count, args.model, args.fresh, args.plan_only,
+                                          args.picker),
                 by_name, "Clips for", is_batch(args.video))
             say(f"Total time: {fmt_duration(time.time() - started)}")
             print_failures(failed)
@@ -1133,9 +1182,8 @@ def main() -> int:
                                       "Processing", is_batch(args.video))
             if stems:
                 say(f"\nStopped for review ({fmt_duration(time.time() - started)} so far).")
-                say("  1. Open these caption files in a text editor and fix any mistakes:")
-                for stem in stems:
-                    say(f"       work/{stem}.srt")
+                say(f"  1. Check the captions next to the video:  python edit.py review {quoted(stems)}")
+                say("     (or open work/<name>.srt in a text editor)")
                 say(f"  2. Then run:  python edit.py finalize {quoted(stems)}")
             print_failures(failed)
             return 1 if failed else 0
@@ -1145,6 +1193,11 @@ def main() -> int:
                                   "Finalizing", len(args.name) > 1)
             print_failures(failed)
             return 1 if failed else 0
+
+        if args.command == "review":
+            run_review(args.name, cfg)
+            say(f"Next:  python edit.py finalize {quoted([Path(n).name for n in args.name])}")
+            return 0
 
         if args.command == "youtube":
             _, failed = run_batch(args.name, lambda n: cmd_youtube(n, cfg), str, "YouTube for", len(args.name) > 1)
@@ -1164,9 +1217,7 @@ def main() -> int:
                 return 0
         stems, failed = run_batch(videos, lambda v: cmd_process(v, cfg), by_name, "Processing", many)
         if stems and not args.no_review:
-            files = ", ".join(f"work/{s}.srt" for s in stems)
-            say(f"\nReview {files} now, save, then press Enter to continue (Ctrl+C to stop).")
-            input()
+            run_review(stems, cfg, enter_continues=True)
         _, failed_final = run_batch(stems, lambda n: cmd_finalize(n, cfg, not args.no_youtube), str,
                                     "Finalizing", many)
         failed += failed_final

@@ -84,6 +84,8 @@ class App:
         self.started_at = 0.0
         self.phase = ""
         self.stopped = False
+        self.review_proc: subprocess.Popen | None = None   # caption review page server
+        self.review_url = ""
 
         root.title("Lecture Editor")
         root.geometry("780x780")
@@ -143,8 +145,11 @@ class App:
         ttk.Label(clip_row, text="Short clips per video:").pack(side="left")
         self.clip_count = tk.IntVar(value=5)
         ttk.Spinbox(clip_row, from_=1, to=20, width=4, textvariable=self.clip_count).pack(side="left", padx=6)
-        ttk.Label(clip_row, text="(vertical, 20-60 s, with captions; used by Make clips)",
-                  foreground="#555").pack(side="left")
+        ttk.Label(clip_row, text="(vertical, 20-60 s, with captions)", foreground="#555").pack(side="left")
+        has_key = bool(saved_api_key()) or (ROOT / "gemini_key.txt").exists()
+        self.clips_ai = tk.BooleanVar(value=has_key)
+        ttk.Checkbutton(clip_row, text="Use AI to pick the clips",
+                        variable=self.clips_ai).pack(side="left", padx=(12, 0))
         ttk.Button(opts, text="Open settings (config.yaml)",
                    command=lambda: open_path(ROOT / "config.yaml")).grid(row=3, column=0, sticky="w", pady=(8, 0))
         opts.columnconfigure(1, weight=1)
@@ -175,8 +180,8 @@ class App:
 
         # Caption review panel (shown only while waiting for review)
         self.review_box = ttk.Frame(run)
-        ttk.Label(self.review_box, text="Check the captions: open each file, fix mistakes (only the text "
-                  "lines), save, then press Finish.", wraplength=680).pack(anchor="w")
+        ttk.Label(self.review_box, text="Check the captions in your browser, next to the video (Review captions). "
+                  "Changes save by themselves. Then press Finish videos here.", wraplength=680).pack(anchor="w")
         rrow = ttk.Frame(self.review_box)
         rrow.pack(fill="x", pady=4)
         self.srt_list = tk.Listbox(rrow, height=3, font=("Segoe UI", 10), activestyle="none")
@@ -184,7 +189,8 @@ class App:
         self.srt_list.bind("<Double-Button-1>", lambda _e: self.open_srt())
         rbtn = ttk.Frame(rrow)
         rbtn.pack(side="left", padx=(8, 0))
-        ttk.Button(rbtn, text="Open captions", command=self.open_srt).pack(fill="x", pady=2)
+        ttk.Button(rbtn, text="Review captions", command=self.review_captions).pack(fill="x", pady=2)
+        ttk.Button(rbtn, text="Open in Notepad", command=self.open_srt).pack(fill="x", pady=2)
         ttk.Button(rbtn, text="Finish videos", style="Accent.TButton", command=self.finish).pack(fill="x", pady=2)
 
         # YouTube prompt panel (free route): copy the prompt, paste it into a chat site
@@ -317,25 +323,30 @@ class App:
         except (tk.TclError, ValueError):
             messagebox.showinfo("Lecture Editor", "Enter how many clips you want (1 to 20).")
             return
-        if not saved_api_key() and not (ROOT / "gemini_key.txt").exists():
+        use_ai = self.clips_ai.get()
+        if use_ai and not saved_api_key() and not (ROOT / "gemini_key.txt").exists():
             if not messagebox.askyesno(
                     "Lecture Editor",
-                    "No AI key is set, so a simple built-in picker will choose the moments and the titles "
-                    "will just be the first sentence of each clip.\n\n"
-                    "For better picks and hook titles, press No, then 'Set API key...'.\n\n"
-                    "Continue with the simple picker?"):
+                    "'Use AI to pick the clips' is ticked, but no AI key is set.\n\n"
+                    "Press Yes to make the clips without AI this time, or No to go back and press "
+                    "'Set API key...'."):
                 return
+            use_ai = False
         self.review_box.pack_forget()
         self.yt_box.pack_forget()
         self.clear_log()
         self.started_at = time.time()
-        self.launch(["clips", *[str(v) for v in self.videos], "--count", str(count)], phase="clips")
+        picker = [] if use_ai else ["--picker", "local"]
+        self.launch(["clips", *[str(v) for v in self.videos], "--count", str(count), *picker], phase="clips")
 
     def finish(self) -> None:
         stems = [s for s in self.after_process if (WORK / f"{s}_fast.mp4").exists()]
         if not stems:
             messagebox.showinfo("Lecture Editor", "There is nothing waiting to be finished.")
             return
+        if self.review_proc and self.review_proc.poll() is None:
+            time.sleep(1.5)                         # let the page's last autosave land
+            self.close_review()
         self.review_box.pack_forget()
         self.yt_box.pack_forget()
         self.launch(["finalize", *stems, *self.youtube_flags()], phase="finalize")
@@ -430,8 +441,9 @@ class App:
                     self.srt_list.insert("end", f"{s}.srt")
                 self.srt_list.selection_set(0)
                 self.review_box.pack(fill="x", pady=(0, 8), before=self.log)
-                self.overall.config(text=f"Captions ready for {len(ready)} lecture(s) ({mins}). Check them, "
-                                         "then press Finish videos.")
+                self.overall.config(text=f"Captions ready for {len(ready)} lecture(s) ({mins}). Check them in "
+                                         "the browser, then press Finish videos.")
+                self.review_captions()
                 self.step.config(text="")
                 self.bar.config(value=100)
             else:
@@ -495,6 +507,52 @@ class App:
         self.overall.config(text=f"Prompt for {name} copied. Open a chat site and paste it (Ctrl+V). "
                                  "Keep this window open until you have pasted.")
 
+    def review_captions(self) -> None:
+        """Open the caption review page (edit.py review) for every lecture waiting to be finished."""
+        stems = [s for s in self.after_process if (WORK / f"{s}.srt").exists()]
+        if not stems:
+            return
+        if self.review_proc and self.review_proc.poll() is None:
+            if self.review_url:
+                webbrowser.open(self.review_url)
+            return
+        env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
+        self.review_url = ""
+        self.review_proc = subprocess.Popen(
+            [python_for_children(), str(EDIT), "review", *stems], cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=NO_WINDOW, text=True,
+            encoding="utf-8", errors="replace")
+        threading.Thread(target=self.read_review_output, args=(self.review_proc,), daemon=True).start()
+        self.write_log("> Caption review page opened in your browser.\n")
+        self.root.after(1000, self.watch_review)
+
+    def read_review_output(self, proc: subprocess.Popen) -> None:
+        for line in proc.stdout:
+            if m := re.search(r"http://127\.0\.0\.1:\d+/", line):
+                self.review_url = m[0]
+            elif line.strip().startswith(("ERROR", "Traceback")) or "Error" in line:
+                self.events.put(("line", line.rstrip()))
+
+    def watch_review(self) -> None:
+        proc = self.review_proc
+        if proc is None:
+            return
+        if proc.poll() is None:
+            self.root.after(1000, self.watch_review)
+            return
+        self.review_proc = None
+        if proc.returncode == 0 and self.review_box.winfo_ismapped():
+            self.overall.config(text="Captions checked. Press Finish videos.")
+
+    def close_review(self) -> None:
+        proc, self.review_proc = self.review_proc, None
+        if proc and proc.poll() is None:
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True,
+                               creationflags=NO_WINDOW)
+            else:
+                proc.terminate()
+
     def open_srt(self) -> None:
         sel = self.srt_list.curselection()
         if sel:
@@ -526,6 +584,7 @@ class App:
                                creationflags=NO_WINDOW)
             else:
                 self.proc.terminate()
+        self.close_review()
         self.root.destroy()
 
 
