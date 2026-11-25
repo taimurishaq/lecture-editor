@@ -63,6 +63,10 @@ def youtube_mode() -> str:
         return "prompt"
 
 
+BG, CARD, LINE = "#f3f5f9", "#ffffff", "#dfe4ec"
+INK, MUTED = "#1c2430", "#5f6b7a"
+ACCENT, VIOLET, HEADER = "#2563eb", "#7c3aed", "#111827"
+
 CHAT_SITES = [("ChatGPT", "https://chatgpt.com/"), ("Gemini", "https://gemini.google.com/app"),
               ("Claude.ai", "https://claude.ai/new")]
 
@@ -88,100 +92,165 @@ class App:
         self.review_url = ""
 
         root.title("Lecture Editor")
-        root.geometry("780x780")
-        root.minsize(620, 560)
+        root.geometry("900x940")
+        root.minsize(780, 720)
+        root.configure(bg=BG)
         style = ttk.Style()
-        if "vista" in style.theme_names():
-            style.theme_use("vista")
-        style.configure("Title.TLabel", font=("Segoe UI", 15, "bold"))
-        style.configure("Status.TLabel", font=("Segoe UI", 10, "bold"))
-        style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"))
+        style.theme_use("clam")
+        style.configure(".", font=("Segoe UI", 10), background=CARD, foreground=INK, fieldbackground=CARD,
+                        bordercolor=LINE, lightcolor=CARD, darkcolor=CARD, troughcolor="#e8ecf3",
+                        focuscolor=CARD)
+        style.configure("TFrame", background=CARD)
+        style.configure("TLabel", background=CARD, foreground=INK)
+        style.configure("Muted.TLabel", foreground=MUTED)
+        style.configure("Card.TLabel", font=("Segoe UI", 12, "bold"))
+        style.configure("Status.TLabel", font=("Segoe UI", 12, "bold"))
+        style.configure("TCheckbutton", background=CARD, foreground=INK, padding=(0, 3))
+        style.map("TCheckbutton", background=[("active", CARD)])
+        style.configure("TSpinbox", padding=3, arrowsize=12)
+        style.configure("TButton", padding=(12, 6), background="#eef1f6", foreground=INK, borderwidth=1,
+                        bordercolor=LINE, relief="flat")
+        style.map("TButton", background=[("active", "#e1e6ef"), ("disabled", "#f4f6fa")],
+                  foreground=[("disabled", "#9aa5b4")])
+        for name, colour, hover in (("Primary", ACCENT, "#1d4ed8"), ("Clips", VIOLET, "#6d28d9")):
+            style.configure(f"{name}.TButton", font=("Segoe UI", 11, "bold"), padding=(18, 10),
+                            background=colour, foreground="#ffffff", borderwidth=0)
+            style.map(f"{name}.TButton", background=[("active", hover), ("disabled", "#c3cad6")],
+                      foreground=[("disabled", "#ffffff")])
+        style.configure("Link.TButton", background=CARD, foreground=ACCENT, borderwidth=0, padding=(2, 2))
+        style.map("Link.TButton", background=[("active", CARD)], foreground=[("active", "#1d4ed8")])
+        style.configure("Bar.Horizontal.TProgressbar", background=ACCENT, troughcolor="#e8ecf3",
+                        borderwidth=0, thickness=10)
 
-        outer = ttk.Frame(root, padding=14)
-        outer.pack(fill="both", expand=True)
-        ttk.Label(outer, text="Lecture Editor", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(outer, text="Cleans the audio, speeds up silences, adds captions, intro and outro. "
-                  "Can also cut short vertical clips.", foreground="#555").pack(anchor="w", pady=(0, 10))
+        def card(parent, title: str, hint: str = ""):
+            """A white box with a thin border, a bold title and an optional grey line under it."""
+            frame = tk.Frame(parent, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+            inner = ttk.Frame(frame, padding=16)
+            inner.pack(fill="both", expand=True)
+            head = ttk.Frame(inner)
+            head.pack(fill="x")
+            ttk.Label(head, text=title, style="Card.TLabel").pack(side="left")
+            if hint:
+                ttk.Label(inner, text=hint, style="Muted.TLabel", wraplength=380,
+                          justify="left").pack(anchor="w", pady=(2, 8))
+            return frame, inner, head
+
+        # Header band
+        header = tk.Frame(root, bg=HEADER)
+        header.pack(fill="x")
+        hrow = tk.Frame(header, bg=HEADER)
+        hrow.pack(fill="x", padx=22, pady=16)
+        titles = tk.Frame(hrow, bg=HEADER)
+        titles.pack(side="left")
+        tk.Label(titles, text="Lecture Editor", bg=HEADER, fg="#ffffff",
+                 font=("Segoe UI", 18, "bold")).pack(anchor="w")
+        tk.Label(titles, text="Get your lecture videos ready to post, and cut short clips.", bg=HEADER,
+                 fg="#aab4c5", font=("Segoe UI", 10)).pack(anchor="w")
+        tk.Button(hrow, text="Settings", command=lambda: open_path(ROOT / "config.yaml"), bg="#1f2937",
+                  fg="#e5e9f0", activebackground="#374151", activeforeground="#ffffff", relief="flat",
+                  bd=0, padx=14, pady=6, font=("Segoe UI", 9), cursor="hand2").pack(side="right")
+
+        body = tk.Frame(root, bg=BG)
+        body.pack(fill="both", expand=True, padx=18, pady=14)
 
         # 1. Videos
-        box = ttk.LabelFrame(outer, text=" 1. Lectures ", padding=10)
-        box.pack(fill="x")
-        left = ttk.Frame(box)
+        videos_card, vin, vhead = card(body, "Your videos")
+        videos_card.pack(fill="x")
+        self.count_label = ttk.Label(vhead, text="", style="Muted.TLabel")
+        self.count_label.pack(side="left", padx=10)
+        vrow = ttk.Frame(vin)
+        vrow.pack(fill="x", pady=(8, 0))
+        left = ttk.Frame(vrow)
         left.pack(side="left", fill="both", expand=True)
-        self.listbox = tk.Listbox(left, height=6, selectmode="extended", activestyle="none",
-                                  font=("Segoe UI", 10))
+        self.listbox = tk.Listbox(left, height=4, selectmode="extended", activestyle="none",
+                                  font=("Segoe UI", 10), relief="flat", bg="#fbfcfe", fg=INK,
+                                  highlightthickness=1, highlightbackground=LINE, highlightcolor=ACCENT,
+                                  selectbackground="#dbe7ff", selectforeground=INK)
         self.listbox.pack(side="left", fill="both", expand=True)
         bar = ttk.Scrollbar(left, orient="vertical", command=self.listbox.yview)
         bar.pack(side="left", fill="y")
         self.listbox.config(yscrollcommand=bar.set)
-        buttons = ttk.Frame(box)
-        buttons.pack(side="left", fill="y", padx=(10, 0))
+        self.list_hint = tk.Label(self.listbox, text="No videos yet.\nPress “Add videos…” to begin.",
+                                  bg="#fbfcfe", fg=MUTED, font=("Segoe UI", 10), justify="center")
+        self.list_hint.place(relx=0.5, rely=0.5, anchor="center")
+        buttons = ttk.Frame(vrow)
+        buttons.pack(side="left", fill="y", padx=(12, 0))
         self.add_btns = [
-            ttk.Button(buttons, text="Add videos...", command=self.add_videos),
-            ttk.Button(buttons, text="Add a folder...", command=self.add_folder),
+            ttk.Button(buttons, text="Add videos…", command=self.add_videos),
+            ttk.Button(buttons, text="Add a folder…", command=self.add_folder),
             ttk.Button(buttons, text="Remove", command=self.remove_selected),
             ttk.Button(buttons, text="Clear", command=self.clear_videos),
         ]
         for b in self.add_btns:
             b.pack(fill="x", pady=2)
 
-        # 2. Options
-        opts = ttk.LabelFrame(outer, text=" 2. Options ", padding=10)
-        opts.pack(fill="x", pady=10)
+        # 2. Two ways to use them, side by side
+        modes = tk.Frame(body, bg=BG)
+        modes.pack(fill="x", pady=14)
+        modes.columnconfigure((0, 1), weight=1, uniform="modes")
+
         self.review = tk.BooleanVar(value=True)
         self.youtube = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opts, text="Let me check the captions before the video is finished",
-                        variable=self.review).grid(row=0, column=0, columnspan=3, sticky="w")
-        yt_text = ("Write a YouTube title, description and chapters (uses your Claude API key)"
-                   if youtube_mode() == "claude" else
-                   "Make a YouTube title, description and chapters (free: paste into ChatGPT or Gemini)")
-        ttk.Checkbutton(opts, text=yt_text, variable=self.youtube).grid(row=1, column=0, sticky="w", pady=(4, 0))
-        self.key_label = ttk.Label(opts, foreground="#555")
-        self.key_label.grid(row=1, column=1, sticky="w", padx=8, pady=(4, 0))
-        ttk.Button(opts, text="Set API key...", command=self.set_api_key).grid(row=1, column=2, sticky="e",
-                                                                              pady=(4, 0))
-        clip_row = ttk.Frame(opts)
-        clip_row.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        ttk.Label(clip_row, text="Short clips per video:").pack(side="left")
+        full_card, fin, _ = card(modes, "Full lecture edit",
+                                 "Fixes the sound, speeds up the quiet parts, and adds captions, an intro and an outro.")
+        full_card.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
+        ttk.Checkbutton(fin, text="Let me check the captions first", variable=self.review).pack(anchor="w")
+        yt_claude = youtube_mode() == "claude"
+        ttk.Checkbutton(fin, text="Make a YouTube title and description",
+                        variable=self.youtube).pack(anchor="w")
+        ttk.Label(fin, style="Muted.TLabel", wraplength=380, justify="left",
+                  text=("Uses your Claude key." if yt_claude else
+                        "Free. You copy some text into ChatGPT or Gemini.")).pack(anchor="w", padx=(22, 0))
+        keyrow = ttk.Frame(fin)
+        keyrow.pack(anchor="w", padx=(22, 0))
+        self.key_label = ttk.Label(keyrow, style="Muted.TLabel")
+        self.key_label.pack(side="left")
+        ttk.Button(keyrow, text="Add Claude key…", style="Link.TButton", command=self.set_api_key,
+                   cursor="hand2").pack(side="left", padx=4)
+        self.start_btn = ttk.Button(fin, text="Start full edit", style="Primary.TButton", command=self.start)
+        self.start_btn.pack(fill="x", pady=(14, 0), side="bottom")
+
+        clips_card, cin, _ = card(modes, "Short clips",
+                                  "Short up-and-down videos for Shorts, Reels and TikTok, with captions.")
+        clips_card.grid(row=0, column=1, sticky="nsew", padx=(7, 0))
+        crow = ttk.Frame(cin)
+        crow.pack(anchor="w", pady=(0, 2))
+        ttk.Label(crow, text="Clips per video").pack(side="left")
         self.clip_count = tk.IntVar(value=5)
-        ttk.Spinbox(clip_row, from_=1, to=20, width=4, textvariable=self.clip_count).pack(side="left", padx=6)
-        ttk.Label(clip_row, text="(vertical, 20-60 s, with captions)", foreground="#555").pack(side="left")
+        ttk.Spinbox(crow, from_=1, to=20, width=4, textvariable=self.clip_count).pack(side="left", padx=8)
+        ttk.Label(crow, text="20–60 seconds each", style="Muted.TLabel").pack(side="left")
         has_key = bool(saved_api_key()) or (ROOT / "gemini_key.txt").exists()
         self.clips_ai = tk.BooleanVar(value=has_key)
-        ttk.Checkbutton(clip_row, text="Use AI to pick the clips",
-                        variable=self.clips_ai).pack(side="left", padx=(12, 0))
-        ttk.Button(opts, text="Open settings (config.yaml)",
-                   command=lambda: open_path(ROOT / "config.yaml")).grid(row=3, column=0, sticky="w", pady=(8, 0))
-        opts.columnconfigure(1, weight=1)
+        ttk.Checkbutton(cin, text="Use AI to choose the best parts", variable=self.clips_ai).pack(anchor="w")
+        ttk.Label(cin, style="Muted.TLabel", wraplength=380, justify="left",
+                  text="Off: the program picks the parts with the most talking. "
+                       "On: smarter choices and better titles.").pack(anchor="w", padx=(22, 0))
+        self.clips_btn = ttk.Button(cin, text="Make clips", style="Clips.TButton", command=self.make_clips)
+        self.clips_btn.pack(fill="x", pady=(14, 0), side="bottom")
         self.refresh_key_label()
 
-        # 3. Run
-        run = ttk.LabelFrame(outer, text=" 3. Run ", padding=10)
-        run.pack(fill="both", expand=True)
+        # 3. Progress
+        run_card, run, _ = card(body, "Progress")
+        run_card.pack(fill="both", expand=True)
+        self.overall = ttk.Label(run, text="First add your videos. Then press Start full edit or Make clips.",
+                                 style="Status.TLabel", wraplength=800, justify="left")
+        self.overall.pack(anchor="w", pady=(4, 2))
+        self.step = ttk.Label(run, text="", style="Muted.TLabel")
+        self.step.pack(anchor="w")
+        self.bar = ttk.Progressbar(run, mode="determinate", maximum=100, style="Bar.Horizontal.TProgressbar")
+        self.bar.pack(fill="x", pady=(6, 10))
         row = ttk.Frame(run)
-        row.pack(fill="x")
-        self.start_btn = ttk.Button(row, text="Start", style="Accent.TButton", command=self.start)
-        self.start_btn.pack(side="left")
-        self.clips_btn = ttk.Button(row, text="Make clips", style="Accent.TButton", command=self.make_clips)
-        self.clips_btn.pack(side="left", padx=(6, 0))
+        row.pack(fill="x", pady=(0, 8))
         self.stop_btn = ttk.Button(row, text="Stop", command=self.stop, state="disabled")
-        self.stop_btn.pack(side="left", padx=6)
+        self.stop_btn.pack(side="left")
         ttk.Button(row, text="Open finished videos", command=self.open_output).pack(side="right")
         ttk.Button(row, text="YouTube prompts", command=lambda: self.show_youtube_box(None)).pack(side="right",
                                                                                               padx=6)
 
-        self.overall = ttk.Label(run, text="Add one or more lectures, then press Start (full lecture) "
-                                           "or Make clips (short clips).", style="Status.TLabel")
-        self.overall.pack(anchor="w", pady=(10, 2))
-        self.step = ttk.Label(run, text="", foreground="#333")
-        self.step.pack(anchor="w")
-        self.bar = ttk.Progressbar(run, mode="determinate", maximum=100)
-        self.bar.pack(fill="x", pady=(4, 8))
-
         # Caption review panel (shown only while waiting for review)
         self.review_box = ttk.Frame(run)
-        ttk.Label(self.review_box, text="Check the captions in your browser, next to the video (Review captions). "
-                  "Changes save by themselves. Then press Finish videos here.", wraplength=680).pack(anchor="w")
+        ttk.Label(self.review_box, text="Check the captions in your browser, next to the video. Your changes save by themselves. "
+                  "When you are done, press Finish videos here.", wraplength=680).pack(anchor="w")
         rrow = ttk.Frame(self.review_box)
         rrow.pack(fill="x", pady=4)
         self.srt_list = tk.Listbox(rrow, height=3, font=("Segoe UI", 10), activestyle="none")
@@ -189,14 +258,14 @@ class App:
         self.srt_list.bind("<Double-Button-1>", lambda _e: self.open_srt())
         rbtn = ttk.Frame(rrow)
         rbtn.pack(side="left", padx=(8, 0))
-        ttk.Button(rbtn, text="Review captions", command=self.review_captions).pack(fill="x", pady=2)
+        ttk.Button(rbtn, text="Check captions", command=self.review_captions).pack(fill="x", pady=2)
         ttk.Button(rbtn, text="Open in Notepad", command=self.open_srt).pack(fill="x", pady=2)
         ttk.Button(rbtn, text="Finish videos", style="Accent.TButton", command=self.finish).pack(fill="x", pady=2)
 
         # YouTube prompt panel (free route): copy the prompt, paste it into a chat site
         self.yt_box = ttk.Frame(run)
-        ttk.Label(self.yt_box, text="YouTube text: press Copy prompt, open a chat site, paste (Ctrl+V) and send. "
-                  "Copy its answer into YouTube Studio.", wraplength=680).pack(anchor="w")
+        ttk.Label(self.yt_box, text="To get the YouTube text: press Copy prompt, open a chat site, paste (Ctrl+V) and send. "
+                  "Then copy the answer into YouTube Studio.", wraplength=680).pack(anchor="w")
         yrow = ttk.Frame(self.yt_box)
         yrow.pack(fill="x", pady=4)
         self.yt_list = tk.Listbox(yrow, height=3, font=("Segoe UI", 10), activestyle="none", exportselection=False)
@@ -239,21 +308,32 @@ class App:
             if p not in self.videos:
                 self.videos.append(p)
                 self.listbox.insert("end", p.name)
+        self.refresh_list_hint()
         if self.videos and not self.busy():
-            self.overall.config(text=f"{len(self.videos)} lecture(s) ready. Press Start.")
+            self.overall.config(text=f"{len(self.videos)} video(s) ready. Press Start full edit or Make clips.")
 
     def remove_selected(self) -> None:
         for i in reversed(self.listbox.curselection()):
             self.listbox.delete(i)
             del self.videos[i]
+        self.refresh_list_hint()
 
     def clear_videos(self) -> None:
         self.listbox.delete(0, "end")
         self.videos.clear()
+        self.refresh_list_hint()
+
+    def refresh_list_hint(self) -> None:
+        n = len(self.videos)
+        self.count_label.config(text="" if not n else f"{n} video" + ("s" if n != 1 else ""))
+        if n:
+            self.list_hint.place_forget()
+        else:
+            self.list_hint.place(relx=0.5, rely=0.5, anchor="center")
 
     # ------------------------------------------------------------------ API key
     def refresh_key_label(self) -> None:
-        self.key_label.config(text="Claude key (optional): set" if saved_api_key() else "Claude key (optional): not set")
+        self.key_label.config(text="Claude key: saved" if saved_api_key() else "Claude key: not added (you can skip this)")
 
     def set_api_key(self) -> None:
         key = simpledialog.askstring(
@@ -292,12 +372,12 @@ class App:
         if self.busy():
             return
         if not self.videos:
-            messagebox.showinfo("Lecture Editor", "Add at least one lecture first.")
+            messagebox.showinfo("Lecture Editor", "Please add a video first.")
             return
         if self.youtube.get() and youtube_mode() == "claude" and not saved_api_key():
             if not messagebox.askyesno(
                     "Lecture Editor",
-                    "No Claude API key is set, so the YouTube title and description will be skipped.\n\n"
+                    "You have not added a Claude key, so the YouTube title and description will be skipped.\n\n"
                     "Continue anyway?"):
                 return
         self.review_box.pack_forget()
@@ -316,20 +396,20 @@ class App:
         if self.busy():
             return
         if not self.videos:
-            messagebox.showinfo("Lecture Editor", "Add at least one video first.")
+            messagebox.showinfo("Lecture Editor", "Please add a video first.")
             return
         try:
             count = max(1, min(20, int(self.clip_count.get())))
         except (tk.TclError, ValueError):
-            messagebox.showinfo("Lecture Editor", "Enter how many clips you want (1 to 20).")
+            messagebox.showinfo("Lecture Editor", "Type a number from 1 to 20 for how many clips you want.")
             return
         use_ai = self.clips_ai.get()
         if use_ai and not saved_api_key() and not (ROOT / "gemini_key.txt").exists():
             if not messagebox.askyesno(
                     "Lecture Editor",
-                    "'Use AI to pick the clips' is ticked, but no AI key is set.\n\n"
-                    "Press Yes to make the clips without AI this time, or No to go back and press "
-                    "'Set API key...'."):
+                    "'Use AI to choose the best parts' is ticked, but you have no AI key.\n\n"
+                    "Press Yes to make the clips without AI this time.\n"
+                    "Press No to go back and add a key."):
                 return
             use_ai = False
         self.review_box.pack_forget()
@@ -364,7 +444,7 @@ class App:
         self.phase = phase
         self.set_running(True)
         self.bar.config(value=0)
-        self.overall.config(text="Working...")
+        self.overall.config(text="Working… please wait.")
         self.step.config(text="")
         threading.Thread(target=self.read_output, args=(self.proc,), daemon=True).start()
 
@@ -406,7 +486,7 @@ class App:
         if m := VIDEO_N.search(line):
             verb = {"Processing": "Preparing", "Finalizing": "Finishing", "YouTube for": "YouTube text for",
                     "Clips for": "Making clips for"}[m[1]]
-            self.overall.config(text=f"{verb} lecture {m[2]} of {m[3]}: {m[4]}")
+            self.overall.config(text=f"{verb} video {m[2]} of {m[3]}: {m[4]}")
         elif line.startswith(("Processing ", "Finalizing ", "YouTube package for ", "Making short clips from ")) \
                 and "video" not in line:
             self.overall.config(text=line.split("  (")[0])
@@ -441,35 +521,34 @@ class App:
                     self.srt_list.insert("end", f"{s}.srt")
                 self.srt_list.selection_set(0)
                 self.review_box.pack(fill="x", pady=(0, 8), before=self.log)
-                self.overall.config(text=f"Captions ready for {len(ready)} lecture(s) ({mins}). Check them in "
-                                         "the browser, then press Finish videos.")
+                self.overall.config(text=f"Captions are ready for {len(ready)} video(s) ({mins}). Check them in "
+                                         "your browser, then press Finish videos.")
                 self.review_captions()
                 self.step.config(text="")
                 self.bar.config(value=100)
             else:
-                self.overall.config(text="Nothing could be prepared. See the messages below.")
+                self.overall.config(text="Something went wrong. Read the details below.")
             return
         if code == 0 and self.phase == "clips":
-            self.overall.config(text=f"Clips ready in {mins}. Opening the clips folder...")
+            self.overall.config(text=f"Your clips are ready ({mins}). Opening the folder…")
             self.step.config(text="")
             self.bar.config(value=100)
             folders = [OUTPUT / f"{v.stem}_clips" for v in self.videos]
             existing = [f for f in folders if f.exists()]
             open_path(existing[0] if len(existing) == 1 else OUTPUT)
         elif code == 0:
-            self.overall.config(text=f"Done in {mins}. Press 'Open finished videos' to see them.")
+            self.overall.config(text=f"All done in {mins}. Press Open finished videos to see them.")
             self.step.config(text="")
             self.bar.config(value=100)
             if self.youtube.get() and self.phase in {"all", "finalize"}:
                 self.show_youtube_box(self.started_at - 1, quiet=True)
         else:
-            self.overall.config(text=f"Finished with problems ({mins}). See the messages below.")
+            self.overall.config(text=f"Finished, but something went wrong ({mins}). Read the details below.")
 
     def stop(self) -> None:
         if not self.busy():
             return
-        if not messagebox.askyesno("Lecture Editor", "Stop the current work? The video being worked on "
-                                                     "will have to be started again."):
+        if not messagebox.askyesno("Lecture Editor", "Stop now? The video being worked on will need to start again."):
             return
         self.stopped = True
         if sys.platform == "win32":                 # also stops FFmpeg / auto-editor started by edit.py
@@ -485,8 +564,8 @@ class App:
             prompts = [p for p in prompts if p.stat().st_mtime >= since]
         if not prompts:
             if not quiet:
-                messagebox.showinfo("Lecture Editor", "No YouTube prompts yet. They are made when a video is "
-                                                      "finished with the YouTube option ticked.")
+                messagebox.showinfo("Lecture Editor", "No YouTube prompts yet. They appear after a video is "
+                                                      "finished with the YouTube box ticked.")
             return
         self.yt_list.delete(0, "end")
         for p in prompts:
@@ -504,7 +583,7 @@ class App:
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
         self.root.update()                          # keep it on the clipboard after this call
-        self.overall.config(text=f"Prompt for {name} copied. Open a chat site and paste it (Ctrl+V). "
+        self.overall.config(text=f"Copied for {name}. Open a chat site and paste it (Ctrl+V). "
                                  "Keep this window open until you have pasted.")
 
     def review_captions(self) -> None:
