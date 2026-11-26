@@ -33,6 +33,13 @@ CLIP_DEFAULTS = {
     "title_overlay": True,
     "loudness_target": -14,
     "default_hashtags": ["#shorts"],
+    "brand": {                      # used by layout: branded (navy card with name, tag and big title)
+        "name": "",
+        "tag": "",
+        "background": "#0b1b3a",
+        "accent": "#c9a24b",
+        "name_font": "Georgia",
+    },
     "captions": {
         "font": "Arial",
         "size": 82,
@@ -62,16 +69,24 @@ def clip_config(cfg: dict) -> dict:
             out[key].update(value)
         else:
             out[key] = value
-    saved = ROOT / "caption_style.json"       # written by the "Caption style" window in the app
+    saved = ROOT / "caption_style.json"       # written by the "Clip style" window in the app
     if saved.exists():
         try:
-            out["captions"].update(json.loads(saved.read_text(encoding="utf-8")))
+            data = json.loads(saved.read_text(encoding="utf-8"))
+            if "captions" in data or "look" in data:
+                out["captions"].update(data.get("captions") or {})
+                look = dict(data.get("look") or {})
+                if look.get("layout"):
+                    out["layout"] = look["layout"]
+                out["brand"].update({k: look[k] for k in ("name", "tag") if k in look})
+            else:
+                out["captions"].update(data)
         except ValueError:
             warn("caption_style.json is damaged, so the settings in config.yaml are used.")
     if float(out["min_seconds"]) >= float(out["max_seconds"]):
         raise EditError("config.yaml: clips.min_seconds must be smaller than clips.max_seconds.")
-    if str(out["layout"]).lower() not in {"blur", "crop"}:
-        raise EditError("config.yaml: clips.layout must be 'blur' or 'crop'.")
+    if str(out["layout"]).lower() not in {"blur", "crop", "branded"}:
+        raise EditError("config.yaml: clips.layout must be 'blur', 'crop' or 'branded'.")
     return out
 
 
@@ -565,6 +580,11 @@ def build_ass(words: list[tuple[float, float, str]], title: str, total: float, c
     pop = is_on(cap.get("highlight_word", True))
     margin_v = int(cap["position_from_bottom"])
     title_margin = 300 if layout == "blur" else 170
+    branded = layout == "branded"
+    brand = cc.get("brand") or {}
+    accent = ass_color(brand.get("accent", "#c9a24b"))
+    if branded:
+        margin_v = 360                           # captions sit under the video card
     lines = [
         "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {W}", f"PlayResY: {H}",
         "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
@@ -576,10 +596,24 @@ def build_ass(words: list[tuple[float, float, str]], title: str, total: float, c
         f"{float(cap['outline_width']):g},3,2,70,70,{margin_v},1",
         f"Style: Title,{font},62,&H00FFFFFF,&H00FFFFFF,&H50000000,&H00000000,-1,0,0,0,100,100,0,0,3,"
         f"16,0,8,90,90,{title_margin},1",
-        "", "[Events]",
-        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
-    if title and is_on(cc.get("title_overlay", True)):
+    if branded:
+        bfont = re.sub(r"[,:']", "", str(brand.get("name_font", "Georgia")))
+        lines += [
+            f"Style: Brand,{bfont},60,{accent},{accent},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,8,60,60,110,1",
+            f"Style: Tag,{font},34,{accent},{accent},&H00000000,&H00000000,-1,0,0,0,100,100,5,0,1,0,0,8,60,60,250,1",
+            f"Style: Head,{font},84,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,8,70,70,330,1",
+        ]
+    lines += ["", "[Events]",
+              "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
+    if branded:
+        if brand.get("name"):
+            lines.append(f"Dialogue: 1,{ass_time(0)},{ass_time(total)},Brand,,0,0,0,,{ass_text(str(brand['name']))}")
+        if brand.get("tag"):
+            lines.append(f"Dialogue: 1,{ass_time(0)},{ass_time(total)},Tag,,0,0,0,,{ass_text(str(brand['tag']).upper())}")
+        if title:
+            lines.append(f"Dialogue: 1,{ass_time(0)},{ass_time(total)},Head,,0,0,0,,{ass_text(str(title).upper())}")
+    elif title and is_on(cc.get("title_overlay", True)):
         lines.append(f"Dialogue: 1,{ass_time(0)},{ass_time(total)},Title,,0,0,0,,{ass_text(title)}")
 
     # Group words into short lines; a pause or the end of a sentence also starts a new line.
@@ -671,7 +705,16 @@ def render_clip(src: Path, clip: dict, segments: list[dict], cc: dict, cfg: dict
         chains.append("[0:v:0]fps=30[vsrc]")
         vin, ain = "[vsrc]", "[0:a:0]"
 
-    if vertical:
+    if layout == "branded":
+        brand = cc.get("brand") or {}
+        bgc = str(brand.get("background", "#0b1b3a")).lstrip("#")
+        ac = str(brand.get("accent", "#c9a24b")).lstrip("#")
+        chains.append(f"{vin}split[bg0][fg0]")
+        chains.append(f"[bg0]scale={W}:{H},drawbox=x=0:y=0:w=iw:h=ih:color=0x{bgc}:t=fill,"
+                      f"drawbox=x=({W}-220)/2:y=222:w=220:h=4:color=0x{ac}:t=fill[bg]")
+        chains.append(f"[fg0]scale=1000:640:force_original_aspect_ratio=decrease[fg]")
+        chains.append(f"[bg][fg]overlay=(W-w)/2:700+(640-h)/2,setsar=1,format=yuv420p,{subs}[v]")
+    elif vertical:
         chains.append(f"{vin}scale={W}:{H}:force_original_aspect_ratio=decrease,"
                       f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,{subs}[v]")
     elif layout == "crop":

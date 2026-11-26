@@ -225,7 +225,7 @@ class App:
         ttk.Label(cin, style="Muted.TLabel", wraplength=380, justify="left",
                   text="Off: the program picks the parts with the most talking. "
                        "On: smarter choices and better titles.").pack(anchor="w", padx=(22, 0))
-        ttk.Button(cin, text="Caption style…", command=self.caption_style_window).pack(anchor="w", pady=(8, 0))
+        ttk.Button(cin, text="Clip style…", command=self.caption_style_window).pack(anchor="w", pady=(8, 0))
         self.clips_btn = ttk.Button(cin, text="Make clips", style="Clips.TButton", command=self.make_clips)
         self.clips_btn.pack(fill="x", pady=(14, 0), side="bottom")
         self.refresh_key_label()
@@ -402,8 +402,10 @@ class App:
             saved = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             saved = {}
+        look = saved.get("look", {}) if "captions" in saved or "look" in saved else {}
+        saved = saved.get("captions", {}) if "captions" in saved or "look" in saved else saved
         win = tk.Toplevel(self.root)
-        win.title("Granite – Caption style")
+        win.title("Granite – Clip style")
         win.configure(bg=CARD)
         win.transient(self.root)
         win.resizable(False, False)
@@ -423,7 +425,19 @@ class App:
         v_color = tk.StringVar(value=saved.get("color", "white"))
         v_hl = tk.StringVar(value=saved.get("highlight_color", "yellow"))
         v_place = tk.StringVar(value=place_now)
-        ttk.Checkbutton(body, text="Show captions", variable=v_show).grid(row=0, column=0, columnspan=2, sticky="w")
+        looks = {"Blurred background": "blur", "Fill the screen": "crop", "Branded card (name + big title)": "branded"}
+        look_now = next((k for k, v in looks.items() if v == look.get("layout", "blur")), "Blurred background")
+        v_look = tk.StringVar(value=look_now)
+        v_brand = tk.StringVar(value=look.get("name", ""))
+        v_tag = tk.StringVar(value=look.get("tag", ""))
+        ttk.Label(body, text="Look of the video").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 14))
+        ttk.Combobox(body, textvariable=v_look, values=list(looks), width=30, state="readonly").grid(
+            row=0, column=1, sticky="w", pady=4)
+        ttk.Label(body, text="Your name (branded card)").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Entry(body, textvariable=v_brand, width=32).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(body, text="Small line under it (e.g. O LEVEL ACCOUNTING)").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(body, textvariable=v_tag, width=32).grid(row=2, column=1, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="Show captions", variable=v_show).grid(row=3, column=0, columnspan=2, sticky="w")
         rows = [("Font", ttk.Combobox(body, textvariable=v_font, values=fonts, width=26)),
                 ("Size (bigger number = bigger text)", ttk.Spinbox(body, from_=40, to=160, width=6, textvariable=v_size)),
                 ("Words on screen at once", ttk.Spinbox(body, from_=1, to=8, width=6, textvariable=v_words)),
@@ -431,15 +445,15 @@ class App:
                 ("Colour of the spoken word", ttk.Combobox(body, textvariable=v_hl, values=colours, width=12)),
                 ("Where on the screen", ttk.Combobox(body, textvariable=v_place, values=list(places), width=14,
                                                      state="readonly"))]
-        for i, (label, widget) in enumerate(rows, start=1):
+        for i, (label, widget) in enumerate(rows, start=4):
             ttk.Label(body, text=label).grid(row=i, column=0, sticky="w", pady=4, padx=(0, 14))
             widget.grid(row=i, column=1, sticky="w", pady=4)
-        ttk.Checkbutton(body, text="CAPITAL LETTERS", variable=v_upper).grid(row=7, column=0, columnspan=2, sticky="w")
-        ttk.Checkbutton(body, text="Bold text", variable=v_bold).grid(row=8, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(body, text="CAPITAL LETTERS", variable=v_upper).grid(row=10, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(body, text="Bold text", variable=v_bold).grid(row=11, column=0, columnspan=2, sticky="w")
         ttk.Checkbutton(body, text="Make the spoken word a different colour and bigger",
-                        variable=v_pop).grid(row=9, column=0, columnspan=2, sticky="w")
+                        variable=v_pop).grid(row=12, column=0, columnspan=2, sticky="w")
         sample = tk.Label(body, text="This is how it looks", bg="#222831", fg="white", width=34, height=3)
-        sample.grid(row=10, column=0, columnspan=2, pady=(12, 4))
+        sample.grid(row=13, column=0, columnspan=2, pady=(12, 4))
 
         def preview(*_):
             try:
@@ -464,11 +478,14 @@ class App:
             except (tk.TclError, ValueError):
                 messagebox.showinfo("Granite", "Please type whole numbers for size and words.", parent=win)
                 return
-            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            path.write_text(json.dumps({
+                "captions": data,
+                "look": {"layout": looks[v_look.get()], "name": v_brand.get().strip(), "tag": v_tag.get().strip()},
+            }, indent=2), encoding="utf-8")
             win.destroy()
             self.overall.config(text="Caption style saved. It will be used the next time you press Make clips.")
         row = ttk.Frame(body)
-        row.grid(row=11, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        row.grid(row=14, column=0, columnspan=2, sticky="e", pady=(10, 0))
         ttk.Button(row, text="Cancel", command=win.destroy).pack(side="left", padx=6)
         ttk.Button(row, text="Save", style="Primary.TButton", command=save).pack(side="left")
         win.grab_set()
