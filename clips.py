@@ -62,6 +62,12 @@ def clip_config(cfg: dict) -> dict:
             out[key].update(value)
         else:
             out[key] = value
+    saved = ROOT / "caption_style.json"       # written by the "Caption style" window in the app
+    if saved.exists():
+        try:
+            out["captions"].update(json.loads(saved.read_text(encoding="utf-8")))
+        except ValueError:
+            warn("caption_style.json is damaged, so the settings in config.yaml are used.")
     if float(out["min_seconds"]) >= float(out["max_seconds"]):
         raise EditError("config.yaml: clips.min_seconds must be smaller than clips.max_seconds.")
     if str(out["layout"]).lower() not in {"blur", "crop"}:
@@ -294,46 +300,122 @@ def first_sentence(text: str, limit: int = 60) -> str:
     return sentence
 
 
+# Words that mean "this is teaching content" or "this is chatter", used by the no-AI picker.
+EMPHASIS = {"remember", "important", "mistake", "mistakes", "never", "always", "secret", "trick", "tip",
+            "exam", "examiner", "marks", "formula", "rule", "shortcut", "common", "wrong", "key", "note",
+            "careful", "difference", "example", "because", "therefore", "means", "definition", "step"}
+CHATTER = {"salam", "assalam", "assalamualaikum", "hello", "welcome", "everyone", "okay", "ok", "hmm",
+           "um", "uh", "umm", "hmmm", "haan", "acha", "achha", "chalo", "toh", "tou"}
+CHATTER_PHRASES = ("can you hear", "hear me", "welcome to", "today we", "today i", "let's start", "lets start",
+                   "let us start", "last class", "last time", "thank you", "thanks for", "see you", "next class",
+                   "next lecture", "homework", "any question", "any doubt", "subscribe", "share screen",
+                   "open your", "turn to page", "page number", "take out", "attendance")
+WEAK_STARTS = {"and", "so", "but", "or", "because", "also", "then", "which", "that", "this", "it", "he", "she",
+               "they", "these", "those", "its", "there", "thus", "however", "yes", "no"}
+
+
+def _norm(word: str) -> str:
+    return re.sub(r"[^a-z]", "", word.lower())
+
+
 def pick_locally(segments: list[dict], cc: dict, count: int) -> list[dict]:
-    """Score every sentence-aligned window between min and max seconds and keep the best."""
+    """Score every sentence-aligned window and keep the best ones, spread across the whole video.
+
+    No AI is used. A good window starts at a fresh sentence, teaches something (key words, numbers,
+    examples), is spoken at a steady pace without many fillers, and is not the greeting, the
+    class admin or the sign-off. Chosen clips are kept apart so they do not all come from one place.
+    """
     lo, hi = float(cc["min_seconds"]), float(cc["max_seconds"])
     target = (lo + hi) / 2
+    total = segments[-1]["end"] if segments else 0.0
+    edge = min(90.0, total * 0.04) if total > 600 else 0.0       # skip the greeting and the sign-off
+
+    def chatter_hits(seg: dict) -> int:
+        low = seg["text"].lower()
+        return sum(p in low for p in CHATTER_PHRASES)
+
     candidates = []
     for i, first in enumerate(segments):
-        speech, words, keywords, text_parts = 0.0, 0, 0, []
+        if first["start"] < edge or (total and first["end"] > total - edge):
+            continue
+        prev_text = segments[i - 1]["text"].rstrip() if i else "."
+        fresh_start = prev_text.endswith((".", "?", "!", "؟", "۔")) or i == 0
+        fw = [_norm(w[2]) for w in first["words"][:3]]
+        weak = bool(fw) and fw[0] in WEAK_STARTS
+        speech, words, emph, filler, chat, numbers = 0.0, 0, 0, 0, 0, 0
+        uniq: set[str] = set()
+        parts: list[dict] = []
         for j in range(i, len(segments)):
             seg = segments[j]
             dur = seg["end"] - first["start"]
-            if dur > hi:
+            if dur > hi or (total and seg["end"] > total - edge):
                 break
+            parts.append(seg)
             speech += sum(w[1] - w[0] for w in seg["words"])
             words += len(seg["words"])
-            text_parts.append(seg["text"])
-            keywords += sum(1 for w in seg["words"] if re.sub(r"[^a-z]", "", w[2].lower()) in HOOK_WORDS)
+            chat += chatter_hits(seg)
+            for w in seg["words"]:
+                n = _norm(w[2])
+                uniq.add(n)
+                emph += n in EMPHASIS or n in HOOK_WORDS
+                filler += n in CHATTER
+                numbers += any(ch.isdigit() for ch in w[2])
             if dur < lo:
                 continue
             density = min(1.0, speech / dur)
-            pace = min(1.0, (words / dur) / 2.8)
-            hook = 1.0 if ("?" in first["text"] or any(
-                re.sub(r"[^a-z]", "", w[2].lower()) in HOOK_WORDS for w in first["words"][:6])) else 0.0
-            clean_end = 1.0 if seg["text"].rstrip().endswith((".", "?", "!")) else 0.0
+            wps = words / dur
+            pace = max(0.0, 1.0 - abs(wps - 2.6) / 2.6)               # steady, not slow, not rushed
+            variety = min(1.0, len(uniq) / max(1, words) / 0.55)       # repeated words = rambling
+            teach = min(1.0, (emph + min(numbers, 4)) / max(3.0, dur / 6))
+            filler_rate = filler / max(1, words)
+            hook = 1.0 if ("?" in first["text"] or any(_norm(w[2]) in HOOK_WORDS for w in first["words"][:6])) else 0.0
+            clean_end = 1.0 if seg["text"].rstrip().endswith((".", "?", "!", "؟", "۔")) else 0.0
             closeness = 1.0 - abs(dur - target) / (hi - lo)
-            score = (35 * density + 15 * pace + 20 * min(keywords, 5) / 5
-                     + 15 * hook + 10 * clean_end + 5 * closeness)
-            candidates.append((score, first["start"], seg["end"], " ".join(text_parts)))
+            score = (25 * density + 10 * pace + 12 * variety + 25 * teach + 10 * hook
+                     + 10 * clean_end + 8 * (1.0 if fresh_start else 0.0) + 4 * closeness)
+            score -= 40 * min(1.0, filler_rate / 0.12)                 # lots of "um", "okay", "acha"
+            score -= 15 * min(chat, 3)                                  # greetings, homework, sign-offs
+            score -= 12 if weak else 0                                   # starts mid-thought ("and so...")
+            candidates.append((score, first["start"], seg["end"], parts[:]))
     candidates.sort(key=lambda c: -c[0])
+    gap = 20.0
     chosen: list[tuple] = []
     for cand in candidates:
-        if all(cand[2] <= c[1] or cand[1] >= c[2] for c in chosen):
+        if all(cand[2] + gap <= c[1] or cand[1] >= c[2] + gap for c in chosen):
             chosen.append(cand)
         if len(chosen) >= count:
             break
-    return [{
-        "start": c[1], "end": c[2], "title": first_sentence(c[3]),
-        "description": first_sentence(c[3], 200), "hashtags": list(cc["default_hashtags"]),
-        "score": int(round(c[0])), "reason": "speech-density and keyword score (no AI)",
-        "picked_by": "local",
-    } for c in chosen]
+    if len(chosen) < count:                                              # short video: allow touching clips
+        for cand in candidates:
+            if cand not in chosen and all(cand[2] <= c[1] or cand[1] >= c[2] for c in chosen):
+                chosen.append(cand)
+            if len(chosen) >= count:
+                break
+
+    def best_sentence(parts: list[dict]) -> str:
+        """Title: the sentence in the clip that sounds most like a teaching point."""
+        best, best_score = parts[0]["text"], -1.0
+        for seg in parts:
+            toks = [_norm(w[2]) for w in seg["words"]]
+            if len(toks) < 4:
+                continue
+            sc = sum(t in EMPHASIS or t in HOOK_WORDS for t in toks) + (2 if "?" in seg["text"] else 0)
+            sc -= 3 * sum(t in CHATTER for t in toks)
+            sc -= 1 if toks[0] in WEAK_STARTS else 0
+            if sc > best_score:
+                best, best_score = seg["text"], sc
+        return best
+
+    out = []
+    for c in chosen:
+        text = " ".join(p["text"] for p in c[3])
+        out.append({
+            "start": c[1], "end": c[2], "title": first_sentence(best_sentence(c[3])),
+            "description": first_sentence(text, 200), "hashtags": list(cc["default_hashtags"]),
+            "score": max(1, min(100, int(round(c[0])))),
+            "reason": "teaching words, steady speech, clean start (no AI)", "picked_by": "local",
+        })
+    return out
 
 
 def snap(clip: dict, words: list[tuple[float, float, str]], cc: dict, duration: float) -> dict | None:
@@ -479,6 +561,8 @@ def build_ass(words: list[tuple[float, float, str]], title: str, total: float, c
     hl_inline = "&H" + hl[4:] + "&"            # \c override takes &HBBGGRR&
     font = re.sub(r"[,:']", "", str(cap["font"]))
     size = int(float(cap["size"]))
+    bold = -1 if is_on(cap.get("bold", True)) else 0
+    pop = is_on(cap.get("highlight_word", True))
     margin_v = int(cap["position_from_bottom"])
     title_margin = 300 if layout == "blur" else 170
     lines = [
@@ -488,7 +572,7 @@ def build_ass(words: list[tuple[float, float, str]], title: str, total: float, c
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, "
         "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Cap,{font},{size},{color},{color},{outline},&H80000000,-1,0,0,0,100,100,0,0,1,"
+        f"Style: Cap,{font},{size},{color},{color},{outline},&H80000000,{bold},0,0,0,100,100,0,0,1,"
         f"{float(cap['outline_width']):g},3,2,70,70,{margin_v},1",
         f"Style: Title,{font},62,&H00FFFFFF,&H00FFFFFF,&H50000000,&H00000000,-1,0,0,0,100,100,0,0,3,"
         f"16,0,8,90,90,{title_margin},1",
@@ -513,6 +597,8 @@ def build_ass(words: list[tuple[float, float, str]], title: str, total: float, c
         word = word.rstrip(".") if not word.endswith("...") else word
         return ass_text(word.upper() if upper else word)
 
+    if not is_on(cap.get("show", True)):
+        groups = []
     for gi, g in enumerate(groups):
         g_end = groups[gi + 1][0][0] if gi + 1 < len(groups) else min(total, g[-1][1] + 0.4)
         g_end = min(g_end, g[-1][1] + 0.6)
@@ -523,7 +609,7 @@ def build_ass(words: list[tuple[float, float, str]], title: str, total: float, c
                 continue
             parts = []
             for k, x in enumerate(g):
-                if k == i:
+                if k == i and pop:
                     parts.append(f"{{\\c{hl_inline}\\fscx112\\fscy112}}{show(x[2])}{{\\r}}")
                 else:
                     parts.append(show(x[2]))

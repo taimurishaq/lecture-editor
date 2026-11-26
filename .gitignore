@@ -35,3 +35,4 @@ venv/
 
 # AI key for picking clips (never commit it)
 gemini_key.txt
+caption_style.json

@@ -225,6 +225,7 @@ class App:
         ttk.Label(cin, style="Muted.TLabel", wraplength=380, justify="left",
                   text="Off: the program picks the parts with the most talking. "
                        "On: smarter choices and better titles.").pack(anchor="w", padx=(22, 0))
+        ttk.Button(cin, text="Caption style…", command=self.caption_style_window).pack(anchor="w", pady=(8, 0))
         self.clips_btn = ttk.Button(cin, text="Make clips", style="Clips.TButton", command=self.make_clips)
         self.clips_btn.pack(fill="x", pady=(14, 0), side="bottom")
         self.refresh_key_label()
@@ -391,6 +392,86 @@ class App:
         else:
             self.after_process = []
             self.launch(["all", *files, "--no-review", *self.youtube_flags()], phase="all")
+
+    def caption_style_window(self) -> None:
+        """Pick the font, size, colours and position of clip captions. Saved in caption_style.json."""
+        import json
+        from tkinter import font as tkfont
+        path = ROOT / "caption_style.json"
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            saved = {}
+        win = tk.Toplevel(self.root)
+        win.title("Granite – Caption style")
+        win.configure(bg=CARD)
+        win.transient(self.root)
+        win.resizable(False, False)
+        body = ttk.Frame(win, padding=18)
+        body.pack(fill="both", expand=True)
+        fonts = sorted({f for f in tkfont.families() if not f.startswith("@")}, key=str.lower)
+        colours = ["white", "yellow", "black", "red", "green", "cyan", "orange", "pink"]
+        places = {"Low": 300, "Lower middle": 480, "Middle": 800, "High": 1250}
+        place_now = next((k for k, v in places.items() if v == saved.get("position_from_bottom", 480)), "Lower middle")
+        v_show = tk.BooleanVar(value=bool(saved.get("show", True)))
+        v_font = tk.StringVar(value=saved.get("font", "Arial"))
+        v_size = tk.IntVar(value=int(saved.get("size", 82)))
+        v_words = tk.IntVar(value=int(saved.get("words_per_line", 3)))
+        v_upper = tk.BooleanVar(value=bool(saved.get("uppercase", True)))
+        v_bold = tk.BooleanVar(value=bool(saved.get("bold", True)))
+        v_pop = tk.BooleanVar(value=bool(saved.get("highlight_word", True)))
+        v_color = tk.StringVar(value=saved.get("color", "white"))
+        v_hl = tk.StringVar(value=saved.get("highlight_color", "yellow"))
+        v_place = tk.StringVar(value=place_now)
+        ttk.Checkbutton(body, text="Show captions", variable=v_show).grid(row=0, column=0, columnspan=2, sticky="w")
+        rows = [("Font", ttk.Combobox(body, textvariable=v_font, values=fonts, width=26)),
+                ("Size (bigger number = bigger text)", ttk.Spinbox(body, from_=40, to=160, width=6, textvariable=v_size)),
+                ("Words on screen at once", ttk.Spinbox(body, from_=1, to=8, width=6, textvariable=v_words)),
+                ("Text colour", ttk.Combobox(body, textvariable=v_color, values=colours, width=12)),
+                ("Colour of the spoken word", ttk.Combobox(body, textvariable=v_hl, values=colours, width=12)),
+                ("Where on the screen", ttk.Combobox(body, textvariable=v_place, values=list(places), width=14,
+                                                     state="readonly"))]
+        for i, (label, widget) in enumerate(rows, start=1):
+            ttk.Label(body, text=label).grid(row=i, column=0, sticky="w", pady=4, padx=(0, 14))
+            widget.grid(row=i, column=1, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="CAPITAL LETTERS", variable=v_upper).grid(row=7, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(body, text="Bold text", variable=v_bold).grid(row=8, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(body, text="Make the spoken word a different colour and bigger",
+                        variable=v_pop).grid(row=9, column=0, columnspan=2, sticky="w")
+        sample = tk.Label(body, text="This is how it looks", bg="#222831", fg="white", width=34, height=3)
+        sample.grid(row=10, column=0, columnspan=2, pady=(12, 4))
+
+        def preview(*_):
+            try:
+                text = "This is how it looks"
+                sample.config(text=text.upper() if v_upper.get() else text, fg=v_color.get() or "white",
+                              font=(v_font.get() or "Arial", 16, "bold" if v_bold.get() else "normal"))
+            except tk.TclError:
+                pass
+        for v in (v_font, v_color, v_upper, v_bold):
+            v.trace_add("write", preview)
+        preview()
+
+        def save() -> None:
+            try:
+                data = {"show": v_show.get(), "font": v_font.get().strip() or "Arial",
+                        "size": max(40, min(160, int(v_size.get()))),
+                        "words_per_line": max(1, min(8, int(v_words.get()))),
+                        "uppercase": v_upper.get(), "bold": v_bold.get(), "highlight_word": v_pop.get(),
+                        "color": v_color.get().strip() or "white",
+                        "highlight_color": v_hl.get().strip() or "yellow",
+                        "position_from_bottom": places[v_place.get()]}
+            except (tk.TclError, ValueError):
+                messagebox.showinfo("Granite", "Please type whole numbers for size and words.", parent=win)
+                return
+            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            win.destroy()
+            self.overall.config(text="Caption style saved. It will be used the next time you press Make clips.")
+        row = ttk.Frame(body)
+        row.grid(row=11, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(row, text="Cancel", command=win.destroy).pack(side="left", padx=6)
+        ttk.Button(row, text="Save", style="Primary.TButton", command=save).pack(side="left")
+        win.grab_set()
 
     def make_clips(self) -> None:
         if self.busy():
